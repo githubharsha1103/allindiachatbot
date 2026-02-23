@@ -65,42 +65,49 @@ export default {
         // Save user's username if available
         const username = ctx.from?.username || ctx.from?.first_name || "Unknown";
         
-        // Update user activity
-        await updateLastActive(userId);
-        
-        // Check if user is new and increment user count
-        const user = await getUser(userId);
-        
-        // Check for referral code in start parameter
-        const startParam = (ctx as any).startPayload || (ctx.update as any)?.message?.text?.split(" ")[1];
+        // CRITICAL: Check for referral code FIRST, before any user creation
+        // Use ctx.startPayload (Telegraf's built-in) or fallback to message text parsing
+        const startPayload = (ctx as any).startPayload;
+        const messageText = (ctx.update as any)?.message?.text;
+        const startParam = startPayload || (messageText?.split(" ")[1] || null);
         
         console.log(`[START] - User ${userId} (${username}) starting`);
-        console.log(`[START] - startPayload: ${(ctx as any).startPayload}`);
-        console.log(`[START] - message text: ${(ctx.update as any)?.message?.text}`);
+        console.log(`[START] - startPayload (ctx.startPayload): ${startPayload}`);
         console.log(`[START] - parsed startParam: ${startParam}`);
         
-        // Initialize new user
+        // Get user FIRST - this determines if user is new
+        // IMPORTANT: Don't call updateLastActive before this - it creates the user!
+        const user = await getUser(userId);
+        
+        // Check if this is a NEW user (first time ever starting the bot)
         if (user.isNew) {
-            // Build update data
+            // ===== NEW USER FLOW =====
+            // Process referral FIRST (if code provided) before finalizing user
+            if (startParam && startParam.startsWith("REF")) {
+                // processReferral will:
+                // 1. Find the referrer by referral code
+                // 2. Check for self-referral
+                // 3. Check if user was already referred
+                // 4. Increment referrer's count
+                // 5. Set referredBy on the new user
+                const referralSuccess = await processReferral(userId, startParam);
+                if (referralSuccess) {
+                    console.log(`[START] - Referral processed successfully for user ${userId} with code: ${startParam}`);
+                } else {
+                    console.log(`[START] - Referral could not be processed for user ${userId} (invalid code or self-referral)`);
+                }
+            }
+            
+            // Now create the user with all required fields
+            // referredBy is set by processReferral, not here
             const updateData: any = { 
                 createdAt: Date.now(), 
                 lastActive: Date.now(),
                 name: username
             };
             
-            // Set referredBy if referral code provided
-            if (startParam && startParam.startsWith("REF")) {
-                updateData.referredBy = startParam;
-            }
-            
             await updateUser(userId, updateData);
             (bot as ExtraTelegraf).incrementUserCount();
-            
-            // Process referral after user is created
-            if (startParam && startParam.startsWith("REF")) {
-                await processReferral(userId, startParam);
-                console.log(`[START] - User ${userId} started with referral code: ${startParam}`);
-            }
             
             // New user - show welcome with Get Started button
             await ctx.reply(
@@ -114,7 +121,8 @@ export default {
             return;
         }
         
-        // Update lastActive for returning users
+        // ===== EXISTING USER FLOW =====
+        // Update lastActive for returning users (user already exists)
         await updateLastActive(userId);
 
         // Check if user is in the middle of setup
