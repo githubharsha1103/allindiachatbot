@@ -66,6 +66,12 @@ export class ExtraTelegraf extends Telegraf<Context> {
   // Rate limiting - userId -> last command time
   rateLimitMap: Map<number, number> = new Map();
   
+  // Action cooldown - userId -> { action -> last execution time }
+  actionCooldownMap: Map<number, Map<string, number>> = new Map();
+  
+  // Cooldown duration in milliseconds (1 second)
+  ACTION_COOLDOWN = 1000;
+  
   // Mutexes for race condition prevention
   chatMutex = new Mutex();
   queueMutex = new Mutex();
@@ -75,6 +81,45 @@ export class ExtraTelegraf extends Telegraf<Context> {
 
   // Rate limit window in milliseconds (1 second - faster for real-time chat)
   RATE_LIMIT_WINDOW = 1000;
+
+  // Check if user is in cooldown for a specific action
+  isActionOnCooldown(userId: number, action: string): boolean {
+    const userCooldowns = this.actionCooldownMap.get(userId);
+    if (!userCooldowns) return false;
+    
+    const lastActionTime = userCooldowns.get(action);
+    if (!lastActionTime) return false;
+    
+    return (Date.now() - lastActionTime) < this.ACTION_COOLDOWN;
+  }
+  
+  // Set action cooldown for user
+  setActionCooldown(userId: number, action: string): void {
+    let userCooldowns = this.actionCooldownMap.get(userId);
+    if (!userCooldowns) {
+      userCooldowns = new Map();
+      this.actionCooldownMap.set(userId, userCooldowns);
+    }
+    userCooldowns.set(action, Date.now());
+    
+    // Clean up old entries to prevent memory leaks
+    if (this.actionCooldownMap.size > 1000) {
+      const now = Date.now();
+      for (const [uid, cooldowns] of this.actionCooldownMap) {
+        let hasRecent = false;
+        for (const [act, time] of cooldowns) {
+          if (now - time < 60000) { // Keep entries from last minute
+            hasRecent = true;
+          } else {
+            cooldowns.delete(act);
+          }
+        }
+        if (!hasRecent) {
+          this.actionCooldownMap.delete(uid);
+        }
+      }
+    }
+  }
 
   getPartner(id: number): number | null {
     const index = this.runningChats.indexOf(id);
@@ -147,6 +192,16 @@ export class ExtraTelegraf extends Telegraf<Context> {
 
 export const bot = new ExtraTelegraf(process.env.BOT_TOKEN!);
 
+// Global catch handler for callback query errors
+bot.catch((err, ctx) => {
+    console.error("[Global bot error]:", err);
+    
+    // Always try to answer callback query to prevent UI freeze
+    if (ctx.callbackQuery) {
+        ctx.answerCbQuery().catch(() => {});
+    }
+});
+
 // Add global error handling middleware for Telegraf BEFORE loading handlers
 bot.use(async (ctx, next) => {
   try {
@@ -181,8 +236,8 @@ initReengagementActions(bot);
 
 /* ---------------- REFERRAL SYSTEM ---------------- */
 
-import { initReferralActions } from "./Commands/referral";
-initReferralActions(bot);
+import referral from "./Commands/referral";
+referral.initActions(bot);
 
 /* ---------------- ADMIN ---------------- */
 

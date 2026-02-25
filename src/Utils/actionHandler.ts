@@ -125,16 +125,40 @@ async function safeAnswerCbQuery(ctx: ActionContext, text?: string) {
     }
 }
 
-// Safe editMessageText helper - handles "message not modified" errors
+// Check and apply action cooldown - returns true if action should be blocked
+function checkAndApplyCooldown(ctx: ActionContext, action: string): boolean {
+    const userId = ctx.from?.id;
+    if (!userId) return false;
+    
+    const botInstance = require("../index").bot;
+    if (botInstance.isActionOnCooldown(userId, action)) {
+        return true;
+    }
+    botInstance.setActionCooldown(userId, action);
+    return false;
+}
+
+// Safe editMessageText helper - handles all errors with fallback to reply
+// This prevents UI freeze when message can't be edited (too old, deleted, etc.)
 async function safeEditMessageText(ctx: ActionContext, text: string, extra?: any) {
     try {
         await ctx.editMessageText(text, extra);
     } catch (error: any) {
-        // Ignore "message not modified" errors (400 Bad Request)
+        // Check for "message not modified" - this is not an error, just ignore it
         if (error.description && error.description.includes("message is not modified")) {
-            // Message already edited, ignore
-        } else {
-            throw error; // Re-throw other errors
+            return; // Message already has same content
+        }
+        
+        // For all other errors (message too old, not found, etc.), try to reply instead
+        console.log("[safeEditMessageText] Falling back to reply:", error.description || error.message);
+        try {
+            await ctx.reply(text, extra);
+        } catch (replyError: any) {
+            // Send user feedback on failure
+            console.error("[safeEditMessageText] Failed to reply:", replyError.message);
+            try {
+                await ctx.answerCbQuery("Something went wrong. Please try again.");
+            } catch { /* ignore */ }
         }
     }
 }
@@ -167,25 +191,28 @@ async function showSettings(ctx: ActionContext) {
         [Markup.button.callback("⭐ Premium", "BUY_PREMIUM")]
     ]);
 
-    // Try to edit, if fails (same content), send new message
-    try {
-        await ctx.editMessageText(text, keyboard);
-    } catch (error: any) {
-        if (!error.description?.includes("message is not modified")) {
-            await safeAnswerCbQuery(ctx);
-            await ctx.reply(text, keyboard);
-        }
-    }
+    // Try to edit with fallback to reply
+    await safeEditMessageText(ctx, text, keyboard);
 }
 
 // Open settings
 bot.action("OPEN_SETTINGS", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "OPEN_SETTINGS")) {
+        await safeAnswerCbQuery(ctx);
+        return;
+    }
     await safeAnswerCbQuery(ctx);
     await showSettings(ctx);
 });
 
 // Start menu actions
 bot.action("START_SEARCH", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "START_SEARCH")) {
+        await safeAnswerCbQuery(ctx, "Please wait a moment...");
+        return;
+    }
     await safeAnswerCbQuery(ctx);
     // Trigger search command
     const searchCommand = require("../Commands/search").default;
@@ -555,6 +582,11 @@ function isAdmin(id: number) {
 
 // Show report reasons
 bot.action("OPEN_REPORT", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "OPEN_REPORT")) {
+        await safeAnswerCbQuery(ctx);
+        return;
+    }
     await safeAnswerCbQuery(ctx);
     if (!ctx.from) return;
     
@@ -569,7 +601,7 @@ bot.action("OPEN_REPORT", async (ctx) => {
     // Store the partner ID for reporting
     await updateUser(ctx.from.id, { reportingPartner: partnerId });
 
-    return ctx.editMessageText(message, reportReasons);
+    return safeEditMessageText(ctx, message, reportReasons);
 });
 
 // Report reason handlers
@@ -595,7 +627,8 @@ for (const [action, reason] of Object.entries(reportReasonsMap)) {
         // Store the report reason temporarily
         await updateUser(ctx.from.id, { reportReason: reason });
         
-        return ctx.editMessageText(
+        return safeEditMessageText(
+            ctx,
             `Report reason: ${reason}\n\nAre you sure you want to report this user?`,
             confirmKeyboard
         );
@@ -604,6 +637,11 @@ for (const [action, reason] of Object.entries(reportReasonsMap)) {
 
 // Confirm report
 bot.action("REPORT_CONFIRM", async (ctx) => {
+    // Check cooldown to prevent report abuse
+    if (checkAndApplyCooldown(ctx, "REPORT_CONFIRM")) {
+        await safeAnswerCbQuery(ctx, "Please wait...");
+        return;
+    }
     await safeAnswerCbQuery(ctx);
     if (!ctx.from) return;
     
@@ -692,14 +730,8 @@ async function showSetupComplete(ctx: ActionContext) {
     
     keyboard = mainMenuKeyboard;
 
-    try {
-        await ctx.editMessageText(text, { parse_mode: "Markdown", ...keyboard });
-    } catch (error: any) {
-        if (!error.description?.includes("message is not modified")) {
-            await safeAnswerCbQuery(ctx);
-            await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
-        }
-    }
+    // Use safeEditMessageText to prevent UI freeze
+    await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...keyboard });
 }
 
 // Setup done - show main menu (same as setup complete)
@@ -759,14 +791,7 @@ bot.action("RATE_GOOD", async (ctx) => {
         `Great to hear you had a positive chat experience!\n\n` +
         `Your feedback helps us make the community better.`;
     
-    try {
-        await ctx.editMessageText(text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
-    } catch (error: any) {
-        // Ignore "message not modified" errors
-        if (!error.description?.includes("message is not modified")) {
-            await safeAnswerCbQuery(ctx, "We're glad you had a good experience! 😊");
-        }
-    }
+    await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
     
     const partnerId = user.lastPartner;
     if (partnerId) {
@@ -786,14 +811,7 @@ bot.action("RATE_BAD", async (ctx) => {
         `Sorry to hear your chat experience wasn't great.\n\n` +
         `Your feedback helps us make the community better.`;
     
-    try {
-        await ctx.editMessageText(text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
-    } catch (error: any) {
-        // Ignore "message not modified" errors
-        if (!error.description?.includes("message is not modified")) {
-            await safeAnswerCbQuery(ctx, "Thanks for your feedback. We'll use it to improve.");
-        }
-    }
+    await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
     
     const partnerId = user.lastPartner;
     if (partnerId) {
@@ -813,14 +831,7 @@ bot.action("RATE_MEDIUM", async (ctx) => {
         `We appreciate your honesty.\n\n` +
         `Your feedback helps us make the community better.`;
     
-    try {
-        await ctx.editMessageText(text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
-    } catch (error: any) {
-        // Ignore "message not modified" errors
-        if (!error.description?.includes("message is not modified")) {
-            await safeAnswerCbQuery(ctx, "Thanks for your feedback!");
-        }
-    }
+    await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...ratingThankYouKeyboard });
     
     const partnerId = user.lastPartner;
     if (partnerId) {

@@ -89,25 +89,48 @@ exports.default = {
     })
 };
 function initAdminActions(bot) {
-    // Safe editMessageText that ignores "not modified" error
+    // Helper function to validate admin permissions
+    function validateAdmin(ctx) {
+        var _a, _b;
+        const adminId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
+        if (!adminId)
+            return false;
+        return isAdmin(adminId) || isAdminByUsername((_b = ctx.from) === null || _b === void 0 ? void 0 : _b.username);
+    }
+    // Safe editMessageText that handles all errors with fallback to reply
+    // This prevents UI freeze when message can't be edited (too old, deleted, etc.)
     function safeEditMessageText(ctx, text, extra) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
             try {
                 yield ctx.editMessageText(text, extra);
             }
             catch (error) {
-                // Ignore "message is not modified" error
-                if (!((_a = error.message) === null || _a === void 0 ? void 0 : _a.includes("not modified"))) {
-                    console.error("[ADMIN ERROR] -", error.message || error);
+                // Check for "message not modified" - this is not an error
+                if (error.description && error.description.includes("message is not modified")) {
+                    return; // Message already has same content
+                }
+                // For all other errors (message too old, not found, etc.), try to reply instead
+                console.log("[adminaccess safeEditMessageText] Falling back to reply:", error.description || error.message);
+                try {
+                    yield ctx.reply(text, extra);
+                    return; // Exit after successful fallback
+                }
+                catch (replyError) {
+                    console.error("[adminaccess safeEditMessageText] Failed to reply:", replyError.message);
                 }
             }
         });
     }
     // Back to main menu
     bot.action("ADMIN_BACK", (ctx) => __awaiter(this, void 0, void 0, function* () {
-        var _a;
-        console.log("[ADMIN] - ADMIN_BACK action triggered for user:", (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id);
+        var _a, _b, _c;
+        // Re-validate admin permissions
+        const adminId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
+        if (!adminId || (!isAdmin(adminId) && !isAdminByUsername((_b = ctx.from) === null || _b === void 0 ? void 0 : _b.username))) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
+        console.log("[ADMIN] - ADMIN_BACK action triggered for user:", (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id);
         try {
             yield safeAnswerCbQuery(ctx);
             console.log("[ADMIN] - Answered callback query");
@@ -120,6 +143,11 @@ function initAdminActions(bot) {
     }));
     // View all users
     bot.action("ADMIN_USERS", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         if (!ctx.from)
             return;
@@ -128,6 +156,11 @@ function initAdminActions(bot) {
     }));
     // View bans
     bot.action("ADMIN_BANS", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         const bans = yield (0, db_1.readBans)();
         if (bans.length === 0) {
@@ -140,6 +173,11 @@ function initAdminActions(bot) {
     }));
     // View stats
     bot.action("ADMIN_STATS", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         const allUsers = yield (0, db_1.getAllUsers)();
         const bans = yield (0, db_1.readBans)();
@@ -154,6 +192,11 @@ function initAdminActions(bot) {
     }));
     // View active chats
     bot.action("ADMIN_ACTIVE_CHATS", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         const runningChats = bot.runningChats;
         const activeChatsCount = runningChats.length / 2;
@@ -179,6 +222,11 @@ function initAdminActions(bot) {
     // Spectate a specific chat
     bot.action(/ADMIN_SPECTATE_(\d+)_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
         var _a;
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         const user1 = parseInt(ctx.match[1]);
         const user2 = parseInt(ctx.match[2]);
@@ -278,6 +326,11 @@ function initAdminActions(bot) {
     // Broadcast message - ask for input
     bot.action("ADMIN_BROADCAST", (ctx) => __awaiter(this, void 0, void 0, function* () {
         var _a;
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         const adminId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
         if (!adminId)
@@ -303,6 +356,11 @@ function initAdminActions(bot) {
     }));
     // Ban user
     bot.action("ADMIN_BAN_USER", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         yield safeAnswerCbQuery(ctx);
         yield safeEditMessageText(ctx, "👤 *Ban User*\n\n" +
             "To ban a user, use the /ban command with their User ID.\n\n" +
@@ -433,7 +491,7 @@ function initAdminActions(bot) {
         const keyboard = telegraf_1.Markup.inlineKeyboard([
             [telegraf_1.Markup.button.callback("🔙 Back", `ADMIN_USER_${userId}`)]
         ]);
-        yield ctx.editMessageText(`<b>📝 Edit Name</b>\n\nUser ID: <code>${userId}</code>\n\n` +
+        yield safeEditMessageText(ctx, `<b>📝 Edit Name</b>\n\nUser ID: <code>${userId}</code>\n\n` +
             `To change the user's name, use:\n` +
             `/setname ${userId} NewName\n\n` +
             `Use the button below to go back.`, Object.assign({ parse_mode: "HTML" }, keyboard));
@@ -455,7 +513,6 @@ function initAdminActions(bot) {
 }
 function showUsersPage(ctx, page) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
         const allUsers = yield (0, db_1.getAllUsers)();
         const usersPerPage = 10;
         const totalPages = Math.ceil(allUsers.length / usersPerPage);
@@ -492,13 +549,22 @@ function showUsersPage(ctx, page) {
             [telegraf_1.Markup.button.callback("🔙 Back to Menu", "ADMIN_BACK")]
         ]);
         const text = `👥 *All Users* (${allUsers.length})\n\nPage ${page + 1}/${totalPages}\n\nClick on a user to view details.`;
+        // Use try-catch with fallback to prevent UI freeze
         try {
             yield ctx.editMessageText(text, Object.assign({ parse_mode: "Markdown" }, keyboard));
         }
-        catch (e) {
-            // Ignore "message is not modified" error
-            if (!((_a = e.message) === null || _a === void 0 ? void 0 : _a.includes("not modified"))) {
-                console.error("[ADMIN ERROR] -", e.message || e);
+        catch (error) {
+            // Check for "message not modified" - ignore it
+            if (error.description && error.description.includes("message is not modified")) {
+                return;
+            }
+            // Fallback to reply for other errors
+            try {
+                yield ctx.reply(text, Object.assign({ parse_mode: "Markdown" }, keyboard));
+                return; // Exit after successful fallback
+            }
+            catch (replyError) {
+                console.error("[showUsersPage] Failed to reply:", replyError.message);
             }
         }
     });
@@ -507,7 +573,24 @@ function showUserDetails(ctx, userId) {
     return __awaiter(this, void 0, void 0, function* () {
         const user = yield (0, db_1.getUser)(userId);
         if (!user) {
-            yield ctx.editMessageText("User not found.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+            // Use try-catch with fallback to prevent UI freeze
+            try {
+                yield ctx.editMessageText("User not found.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+            }
+            catch (error) {
+                // Check for "message not modified" - ignore it
+                if (error.description && error.description.includes("message is not modified")) {
+                    return;
+                }
+                // Fallback to reply for other errors
+                try {
+                    yield ctx.reply("User not found.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+                    return; // Exit after successful fallback
+                }
+                catch (replyError) {
+                    console.error("[showUserDetails] Failed to reply:", replyError.message);
+                }
+            }
             return;
         }
         // Use saved name or try to get from Telegram
@@ -584,8 +667,19 @@ function showUserDetails(ctx, userId) {
         try {
             yield ctx.editMessageText(details, Object.assign({ parse_mode: "Markdown" }, keyboard));
         }
-        catch (e) {
-            // Ignore "message is not modified" error
+        catch (error) {
+            // Check for "message not modified" - ignore it
+            if (error.description && error.description.includes("message is not modified")) {
+                return;
+            }
+            // Fallback to reply for other errors
+            try {
+                yield ctx.reply(details, Object.assign({ parse_mode: "Markdown" }, keyboard));
+                return; // Exit after successful fallback
+            }
+            catch (replyError) {
+                console.error("[showUserDetails] Failed to reply:", replyError.message);
+            }
         }
     });
 }

@@ -67,6 +67,10 @@ class ExtraTelegraf extends telegraf_1.Telegraf {
         this.spectatingChats = new Map();
         // Rate limiting - userId -> last command time
         this.rateLimitMap = new Map();
+        // Action cooldown - userId -> { action -> last execution time }
+        this.actionCooldownMap = new Map();
+        // Cooldown duration in milliseconds (1 second)
+        this.ACTION_COOLDOWN = 1000;
         // Mutexes for race condition prevention
         this.chatMutex = new Mutex();
         this.queueMutex = new Mutex();
@@ -74,6 +78,43 @@ class ExtraTelegraf extends telegraf_1.Telegraf {
         this.MAX_QUEUE_SIZE = 10000;
         // Rate limit window in milliseconds (1 second - faster for real-time chat)
         this.RATE_LIMIT_WINDOW = 1000;
+    }
+    // Check if user is in cooldown for a specific action
+    isActionOnCooldown(userId, action) {
+        const userCooldowns = this.actionCooldownMap.get(userId);
+        if (!userCooldowns)
+            return false;
+        const lastActionTime = userCooldowns.get(action);
+        if (!lastActionTime)
+            return false;
+        return (Date.now() - lastActionTime) < this.ACTION_COOLDOWN;
+    }
+    // Set action cooldown for user
+    setActionCooldown(userId, action) {
+        let userCooldowns = this.actionCooldownMap.get(userId);
+        if (!userCooldowns) {
+            userCooldowns = new Map();
+            this.actionCooldownMap.set(userId, userCooldowns);
+        }
+        userCooldowns.set(action, Date.now());
+        // Clean up old entries to prevent memory leaks
+        if (this.actionCooldownMap.size > 1000) {
+            const now = Date.now();
+            for (const [uid, cooldowns] of this.actionCooldownMap) {
+                let hasRecent = false;
+                for (const [act, time] of cooldowns) {
+                    if (now - time < 60000) { // Keep entries from last minute
+                        hasRecent = true;
+                    }
+                    else {
+                        cooldowns.delete(act);
+                    }
+                }
+                if (!hasRecent) {
+                    this.actionCooldownMap.delete(uid);
+                }
+            }
+        }
     }
     getPartner(id) {
         const index = this.runningChats.indexOf(id);
@@ -137,6 +178,14 @@ class ExtraTelegraf extends telegraf_1.Telegraf {
 }
 exports.ExtraTelegraf = ExtraTelegraf;
 exports.bot = new ExtraTelegraf(process.env.BOT_TOKEN);
+// Global catch handler for callback query errors
+exports.bot.catch((err, ctx) => {
+    console.error("[Global bot error]:", err);
+    // Always try to answer callback query to prevent UI freeze
+    if (ctx.callbackQuery) {
+        ctx.answerCbQuery().catch(() => { });
+    }
+});
 // Add global error handling middleware for Telegraf BEFORE loading handlers
 exports.bot.use((ctx, next) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
@@ -164,8 +213,8 @@ const adminaccess_1 = require("./Commands/adminaccess");
 const reengagement_1 = require("./Commands/reengagement");
 (0, reengagement_1.initReengagementActions)(exports.bot);
 /* ---------------- REFERRAL SYSTEM ---------------- */
-const referral_1 = require("./Commands/referral");
-(0, referral_1.initReferralActions)(exports.bot);
+const referral_1 = __importDefault(require("./Commands/referral"));
+referral_1.default.initActions(exports.bot);
 /* ---------------- ADMIN ---------------- */
 const ADMINS = ((_a = process.env.ADMIN_IDS) === null || _a === void 0 ? void 0 : _a.split(",")) || [];
 function isAdmin(id) {

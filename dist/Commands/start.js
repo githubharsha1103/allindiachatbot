@@ -66,39 +66,49 @@ exports.default = {
     name: "start",
     description: "Start the bot",
     execute: (ctx, bot) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h;
+        var _a, _b, _c, _d, _e;
         const userId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
         // Save user's username if available
         const username = ((_b = ctx.from) === null || _b === void 0 ? void 0 : _b.username) || ((_c = ctx.from) === null || _c === void 0 ? void 0 : _c.first_name) || "Unknown";
-        // Update user activity
-        yield (0, db_1.updateLastActive)(userId);
-        // Check if user is new and increment user count
-        const user = yield (0, db_1.getUser)(userId);
-        // Check for referral code in start parameter
-        const startParam = ctx.startPayload || ((_f = (_e = (_d = ctx.update) === null || _d === void 0 ? void 0 : _d.message) === null || _e === void 0 ? void 0 : _e.text) === null || _f === void 0 ? void 0 : _f.split(" ")[1]);
+        // CRITICAL: Check for referral code FIRST, before any user creation
+        // Use ctx.startPayload (Telegraf's built-in) or fallback to message text parsing
+        const startPayload = ctx.startPayload;
+        const messageText = (_e = (_d = ctx.update) === null || _d === void 0 ? void 0 : _d.message) === null || _e === void 0 ? void 0 : _e.text;
+        const startParam = startPayload || ((messageText === null || messageText === void 0 ? void 0 : messageText.split(" ")[1]) || null);
         console.log(`[START] - User ${userId} (${username}) starting`);
-        console.log(`[START] - startPayload: ${ctx.startPayload}`);
-        console.log(`[START] - message text: ${(_h = (_g = ctx.update) === null || _g === void 0 ? void 0 : _g.message) === null || _h === void 0 ? void 0 : _h.text}`);
+        console.log(`[START] - startPayload (ctx.startPayload): ${startPayload}`);
         console.log(`[START] - parsed startParam: ${startParam}`);
-        // Initialize new user
+        // Get user FIRST - this determines if user is new
+        // IMPORTANT: Don't call updateLastActive before this - it creates the user!
+        const user = yield (0, db_1.getUser)(userId);
+        // Check if this is a NEW user (first time ever starting the bot)
         if (user.isNew) {
-            // Build update data
+            // ===== NEW USER FLOW =====
+            // Process referral FIRST (if code provided) before finalizing user
+            if (startParam && startParam.startsWith("REF")) {
+                // processReferral will:
+                // 1. Find the referrer by referral code
+                // 2. Check for self-referral
+                // 3. Check if user was already referred
+                // 4. Increment referrer's count
+                // 5. Set referredBy on the new user
+                const referralSuccess = yield (0, db_1.processReferral)(userId, startParam);
+                if (referralSuccess) {
+                    console.log(`[START] - Referral processed successfully for user ${userId} with code: ${startParam}`);
+                }
+                else {
+                    console.log(`[START] - Referral could not be processed for user ${userId} (invalid code or self-referral)`);
+                }
+            }
+            // Now create the user with all required fields
+            // referredBy is set by processReferral, not here
             const updateData = {
                 createdAt: Date.now(),
                 lastActive: Date.now(),
                 name: username
             };
-            // Set referredBy if referral code provided
-            if (startParam && startParam.startsWith("REF")) {
-                updateData.referredBy = startParam;
-            }
             yield (0, db_1.updateUser)(userId, updateData);
             bot.incrementUserCount();
-            // Process referral after user is created
-            if (startParam && startParam.startsWith("REF")) {
-                yield (0, db_1.processReferral)(userId, startParam);
-                console.log(`[START] - User ${userId} started with referral code: ${startParam}`);
-            }
             // New user - show welcome with Get Started button
             yield ctx.reply("🌟 <b>Welcome to Anonymous Chat!</b> 🌟\n\n" +
                 "✨ Connect with strangers anonymously\n" +
@@ -107,7 +117,8 @@ exports.default = {
                 "Tap <b>Get Started</b> to begin!", Object.assign({ parse_mode: "HTML" }, welcomeKeyboard));
             return;
         }
-        // Update lastActive for returning users
+        // ===== EXISTING USER FLOW =====
+        // Update lastActive for returning users (user already exists)
         yield (0, db_1.updateLastActive)(userId);
         // Check if user is in the middle of setup
         const setupStep = user.setupStep;

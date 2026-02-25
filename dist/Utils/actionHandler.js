@@ -122,19 +122,43 @@ function safeAnswerCbQuery(ctx, text) {
         }
     });
 }
-// Safe editMessageText helper - handles "message not modified" errors
+// Check and apply action cooldown - returns true if action should be blocked
+function checkAndApplyCooldown(ctx, action) {
+    var _a;
+    const userId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
+    if (!userId)
+        return false;
+    const botInstance = require("../index").bot;
+    if (botInstance.isActionOnCooldown(userId, action)) {
+        return true;
+    }
+    botInstance.setActionCooldown(userId, action);
+    return false;
+}
+// Safe editMessageText helper - handles all errors with fallback to reply
+// This prevents UI freeze when message can't be edited (too old, deleted, etc.)
 function safeEditMessageText(ctx, text, extra) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             yield ctx.editMessageText(text, extra);
         }
         catch (error) {
-            // Ignore "message not modified" errors (400 Bad Request)
+            // Check for "message not modified" - this is not an error, just ignore it
             if (error.description && error.description.includes("message is not modified")) {
-                // Message already edited, ignore
+                return; // Message already has same content
             }
-            else {
-                throw error; // Re-throw other errors
+            // For all other errors (message too old, not found, etc.), try to reply instead
+            console.log("[safeEditMessageText] Falling back to reply:", error.description || error.message);
+            try {
+                yield ctx.reply(text, extra);
+            }
+            catch (replyError) {
+                // Send user feedback on failure
+                console.error("[safeEditMessageText] Failed to reply:", replyError.message);
+                try {
+                    yield ctx.answerCbQuery("Something went wrong. Please try again.");
+                }
+                catch ( /* ignore */_a) { /* ignore */ }
             }
         }
     });
@@ -142,7 +166,7 @@ function safeEditMessageText(ctx, text, extra) {
 // Function to show settings menu
 function showSettings(ctx) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d;
+        var _a, _b, _c;
         if (!ctx.from)
             return;
         const u = yield (0, db_1.getUser)(ctx.from.id);
@@ -166,25 +190,27 @@ function showSettings(ctx) {
             [telegraf_1.Markup.button.callback("🎁 Referrals", "OPEN_REFERRAL")],
             [telegraf_1.Markup.button.callback("⭐ Premium", "BUY_PREMIUM")]
         ]);
-        // Try to edit, if fails (same content), send new message
-        try {
-            yield ctx.editMessageText(text, keyboard);
-        }
-        catch (error) {
-            if (!((_d = error.description) === null || _d === void 0 ? void 0 : _d.includes("message is not modified"))) {
-                yield safeAnswerCbQuery(ctx);
-                yield ctx.reply(text, keyboard);
-            }
-        }
+        // Try to edit with fallback to reply
+        yield safeEditMessageText(ctx, text, keyboard);
     });
 }
 // Open settings
 index_1.bot.action("OPEN_SETTINGS", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "OPEN_SETTINGS")) {
+        yield safeAnswerCbQuery(ctx);
+        return;
+    }
     yield safeAnswerCbQuery(ctx);
     yield showSettings(ctx);
 }));
 // Start menu actions
 index_1.bot.action("START_SEARCH", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "START_SEARCH")) {
+        yield safeAnswerCbQuery(ctx, "Please wait a moment...");
+        return;
+    }
     yield safeAnswerCbQuery(ctx);
     // Trigger search command
     const searchCommand = require("../Commands/search").default;
@@ -484,6 +510,11 @@ function isAdmin(id) {
 }
 // Show report reasons
 index_1.bot.action("OPEN_REPORT", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "OPEN_REPORT")) {
+        yield safeAnswerCbQuery(ctx);
+        return;
+    }
     yield safeAnswerCbQuery(ctx);
     if (!ctx.from)
         return;
@@ -495,7 +526,7 @@ index_1.bot.action("OPEN_REPORT", (ctx) => __awaiter(void 0, void 0, void 0, fun
     }
     // Store the partner ID for reporting
     yield (0, db_1.updateUser)(ctx.from.id, { reportingPartner: partnerId });
-    return ctx.editMessageText(message, reportReasons);
+    return safeEditMessageText(ctx, message, reportReasons);
 }));
 // Report reason handlers
 const reportReasonsMap = {
@@ -516,11 +547,16 @@ for (const [action, reason] of Object.entries(reportReasonsMap)) {
         }
         // Store the report reason temporarily
         yield (0, db_1.updateUser)(ctx.from.id, { reportReason: reason });
-        return ctx.editMessageText(`Report reason: ${reason}\n\nAre you sure you want to report this user?`, confirmKeyboard);
+        return safeEditMessageText(ctx, `Report reason: ${reason}\n\nAre you sure you want to report this user?`, confirmKeyboard);
     }));
 }
 // Confirm report
 index_1.bot.action("REPORT_CONFIRM", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Check cooldown to prevent report abuse
+    if (checkAndApplyCooldown(ctx, "REPORT_CONFIRM")) {
+        yield safeAnswerCbQuery(ctx, "Please wait...");
+        return;
+    }
     yield safeAnswerCbQuery(ctx);
     if (!ctx.from)
         return;
@@ -561,7 +597,6 @@ index_1.bot.action("REPORT_CANCEL", (ctx) => __awaiter(void 0, void 0, void 0, f
 // Show improved setup complete message with summary
 function showSetupComplete(ctx) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
         if (!ctx.from)
             return;
         const user = yield (0, db_1.getUser)(ctx.from.id);
@@ -594,15 +629,8 @@ function showSetupComplete(ctx) {
             "❓ /help - Get help with commands\n\n" +
             "💡 *Tip:* Be friendly and respectful for the best experience!";
         keyboard = mainMenuKeyboard;
-        try {
-            yield ctx.editMessageText(text, Object.assign({ parse_mode: "Markdown" }, keyboard));
-        }
-        catch (error) {
-            if (!((_a = error.description) === null || _a === void 0 ? void 0 : _a.includes("message is not modified"))) {
-                yield safeAnswerCbQuery(ctx);
-                yield ctx.reply(text, Object.assign({ parse_mode: "Markdown" }, keyboard));
-            }
-        }
+        // Use safeEditMessageText to prevent UI freeze
+        yield safeEditMessageText(ctx, text, Object.assign({ parse_mode: "Markdown" }, keyboard));
     });
 }
 // Setup done - show main menu (same as setup complete)
@@ -647,7 +675,6 @@ const ratingThankYouKeyboard = telegraf_1.Markup.inlineKeyboard([
 ]);
 // Rate chat as Good
 index_1.bot.action("RATE_GOOD", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
     yield safeAnswerCbQuery(ctx, "We're glad you had a good experience! 😊");
     if (!ctx.from)
         return;
@@ -655,15 +682,7 @@ index_1.bot.action("RATE_GOOD", (ctx) => __awaiter(void 0, void 0, void 0, funct
     const text = `😊 *Thanks for your feedback!*\n\n` +
         `Great to hear you had a positive chat experience!\n\n` +
         `Your feedback helps us make the community better.`;
-    try {
-        yield ctx.editMessageText(text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
-    }
-    catch (error) {
-        // Ignore "message not modified" errors
-        if (!((_a = error.description) === null || _a === void 0 ? void 0 : _a.includes("message is not modified"))) {
-            yield safeAnswerCbQuery(ctx, "We're glad you had a good experience! 😊");
-        }
-    }
+    yield safeEditMessageText(ctx, text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
     const partnerId = user.lastPartner;
     if (partnerId) {
         yield (0, db_1.updateUser)(partnerId, { chatRating: 5 });
@@ -671,7 +690,6 @@ index_1.bot.action("RATE_GOOD", (ctx) => __awaiter(void 0, void 0, void 0, funct
 }));
 // Rate chat as Bad
 index_1.bot.action("RATE_BAD", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
     yield safeAnswerCbQuery(ctx, "Thanks for your feedback. We'll use it to improve.");
     if (!ctx.from)
         return;
@@ -679,15 +697,7 @@ index_1.bot.action("RATE_BAD", (ctx) => __awaiter(void 0, void 0, void 0, functi
     const text = `📝 *Thanks for your feedback!*\n\n` +
         `Sorry to hear your chat experience wasn't great.\n\n` +
         `Your feedback helps us make the community better.`;
-    try {
-        yield ctx.editMessageText(text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
-    }
-    catch (error) {
-        // Ignore "message not modified" errors
-        if (!((_a = error.description) === null || _a === void 0 ? void 0 : _a.includes("message is not modified"))) {
-            yield safeAnswerCbQuery(ctx, "Thanks for your feedback. We'll use it to improve.");
-        }
-    }
+    yield safeEditMessageText(ctx, text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
     const partnerId = user.lastPartner;
     if (partnerId) {
         yield (0, db_1.updateUser)(partnerId, { chatRating: 1 });
@@ -695,7 +705,6 @@ index_1.bot.action("RATE_BAD", (ctx) => __awaiter(void 0, void 0, void 0, functi
 }));
 // Rate chat as Medium
 index_1.bot.action("RATE_MEDIUM", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
     yield safeAnswerCbQuery(ctx, "Thanks for your feedback!");
     if (!ctx.from)
         return;
@@ -703,15 +712,7 @@ index_1.bot.action("RATE_MEDIUM", (ctx) => __awaiter(void 0, void 0, void 0, fun
     const text = `📝 *Thanks for your feedback!*\n\n` +
         `We appreciate your honesty.\n\n` +
         `Your feedback helps us make the community better.`;
-    try {
-        yield ctx.editMessageText(text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
-    }
-    catch (error) {
-        // Ignore "message not modified" errors
-        if (!((_a = error.description) === null || _a === void 0 ? void 0 : _a.includes("message is not modified"))) {
-            yield safeAnswerCbQuery(ctx, "Thanks for your feedback!");
-        }
-    }
+    yield safeEditMessageText(ctx, text, Object.assign({ parse_mode: "Markdown" }, ratingThankYouKeyboard));
     const partnerId = user.lastPartner;
     if (partnerId) {
         yield (0, db_1.updateUser)(partnerId, { chatRating: 3 });

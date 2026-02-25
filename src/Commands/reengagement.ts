@@ -98,12 +98,22 @@ async function safeAnswerCbQuery(ctx: any, text?: string) {
 }
 
 // Helper function for safe editMessageText
+// This prevents UI freeze when message can't be edited
 async function safeEditMessageText(ctx: any, text: string, extra?: any) {
     try {
         await ctx.editMessageText(text, extra);
     } catch (error: any) {
-        if (!error.description?.includes("message is not modified")) {
-            throw error;
+        // Check for "message not modified" - this is not an error
+        if (error.description && error.description.includes("message is not modified")) {
+            return;
+        }
+        // For all other errors, try to reply instead to prevent UI freeze
+        console.log("[Reengagement safeEditMessageText] Falling back to reply:", error.description || error.message);
+        try {
+            await ctx.reply(text, extra);
+            return; // Exit after successful fallback
+        } catch (replyError: any) {
+            console.error("[Reengagement safeEditMessageText] Failed to reply:", replyError.message);
         }
     }
 }

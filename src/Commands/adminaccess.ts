@@ -88,20 +88,44 @@ export default {
 } as Command;
 
 export function initAdminActions(bot: ExtraTelegraf) {
-    // Safe editMessageText that ignores "not modified" error
+    // Helper function to validate admin permissions
+    function validateAdmin(ctx: any): boolean {
+        const adminId = ctx.from?.id;
+        if (!adminId) return false;
+        return isAdmin(adminId) || isAdminByUsername(ctx.from?.username);
+    }
+
+    // Safe editMessageText that handles all errors with fallback to reply
+    // This prevents UI freeze when message can't be edited (too old, deleted, etc.)
     async function safeEditMessageText(ctx: any, text: string, extra?: any) {
         try {
             await ctx.editMessageText(text, extra);
         } catch (error: any) {
-            // Ignore "message is not modified" error
-            if (!error.message?.includes("not modified")) {
-                console.error("[ADMIN ERROR] -", error.message || error);
+            // Check for "message not modified" - this is not an error
+            if (error.description && error.description.includes("message is not modified")) {
+                return; // Message already has same content
+            }
+            
+            // For all other errors (message too old, not found, etc.), try to reply instead
+            console.log("[adminaccess safeEditMessageText] Falling back to reply:", error.description || error.message);
+            try {
+                await ctx.reply(text, extra);
+                return; // Exit after successful fallback
+            } catch (replyError: any) {
+                console.error("[adminaccess safeEditMessageText] Failed to reply:", replyError.message);
             }
         }
     }
 
     // Back to main menu
     bot.action("ADMIN_BACK", async (ctx) => {
+        // Re-validate admin permissions
+        const adminId = ctx.from?.id;
+        if (!adminId || (!isAdmin(adminId) && !isAdminByUsername(ctx.from?.username))) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
+        
         console.log("[ADMIN] - ADMIN_BACK action triggered for user:", ctx.from?.id);
         try {
             await safeAnswerCbQuery(ctx);
@@ -119,6 +143,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // View all users
     bot.action("ADMIN_USERS", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         if (!ctx.from) return;
         userPages.set(ctx.from.id, 0);
@@ -127,6 +156,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // View bans
     bot.action("ADMIN_BANS", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         const bans = await readBans();
         if (bans.length === 0) {
@@ -145,6 +179,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // View stats
     bot.action("ADMIN_STATS", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         const allUsers = await getAllUsers();
         const bans = await readBans();
@@ -162,6 +201,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // View active chats
     bot.action("ADMIN_ACTIVE_CHATS", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         
         const runningChats = bot.runningChats;
@@ -198,6 +242,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // Spectate a specific chat
     bot.action(/ADMIN_SPECTATE_(\d+)_(\d+)/, async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         
         const user1 = parseInt(ctx.match[1]);
@@ -329,6 +378,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // Broadcast message - ask for input
     bot.action("ADMIN_BROADCAST", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         
         const adminId = ctx.from?.id;
@@ -365,6 +419,11 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // Ban user
     bot.action("ADMIN_BAN_USER", async (ctx) => {
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            await safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
         await safeAnswerCbQuery(ctx);
         await safeEditMessageText(ctx,
             "👤 *Ban User*\n\n" +
@@ -529,7 +588,8 @@ export function initAdminActions(bot: ExtraTelegraf) {
             [Markup.button.callback("🔙 Back", `ADMIN_USER_${userId}`)]
         ]);
         
-        await ctx.editMessageText(
+        await safeEditMessageText(
+            ctx,
             `<b>📝 Edit Name</b>\n\nUser ID: <code>${userId}</code>\n\n` +
             `To change the user's name, use:\n` +
             `/setname ${userId} NewName\n\n` +
@@ -597,12 +657,20 @@ async function showUsersPage(ctx: any, page: number) {
     ]);
     
     const text = `👥 *All Users* (${allUsers.length})\n\nPage ${page + 1}/${totalPages}\n\nClick on a user to view details.`;
+    // Use try-catch with fallback to prevent UI freeze
     try {
         await ctx.editMessageText(text, { parse_mode: "Markdown", ...keyboard });
-    } catch (e: any) {
-        // Ignore "message is not modified" error
-        if (!e.message?.includes("not modified")) {
-            console.error("[ADMIN ERROR] -", e.message || e);
+    } catch (error: any) {
+        // Check for "message not modified" - ignore it
+        if (error.description && error.description.includes("message is not modified")) {
+            return;
+        }
+        // Fallback to reply for other errors
+        try {
+            await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
+            return; // Exit after successful fallback
+        } catch (replyError: any) {
+            console.error("[showUsersPage] Failed to reply:", replyError.message);
         }
     }
 }
@@ -610,10 +678,28 @@ async function showUsersPage(ctx: any, page: number) {
 async function showUserDetails(ctx: any, userId: number) {
     const user = await getUser(userId);
     if (!user) {
-        await ctx.editMessageText(
-            "User not found.",
-            { parse_mode: "Markdown", ...backKeyboard }
-        );
+        // Use try-catch with fallback to prevent UI freeze
+        try {
+            await ctx.editMessageText(
+                "User not found.",
+                { parse_mode: "Markdown", ...backKeyboard }
+            );
+        } catch (error: any) {
+            // Check for "message not modified" - ignore it
+            if (error.description && error.description.includes("message is not modified")) {
+                return;
+            }
+            // Fallback to reply for other errors
+            try {
+                await ctx.reply(
+                    "User not found.",
+                    { parse_mode: "Markdown", ...backKeyboard }
+                );
+                return; // Exit after successful fallback
+            } catch (replyError: any) {
+                console.error("[showUserDetails] Failed to reply:", replyError.message);
+            }
+        }
         return;
     }
 
@@ -695,7 +781,17 @@ async function showUserDetails(ctx: any, userId: number) {
 
     try {
         await ctx.editMessageText(details, { parse_mode: "Markdown", ...keyboard });
-    } catch (e) {
-        // Ignore "message is not modified" error
+    } catch (error: any) {
+        // Check for "message not modified" - ignore it
+        if (error.description && error.description.includes("message is not modified")) {
+            return;
+        }
+        // Fallback to reply for other errors
+        try {
+            await ctx.reply(details, { parse_mode: "Markdown", ...keyboard });
+            return; // Exit after successful fallback
+        } catch (replyError: any) {
+            console.error("[showUserDetails] Failed to reply:", replyError.message);
+        }
     }
 }
