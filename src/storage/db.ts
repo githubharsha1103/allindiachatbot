@@ -36,6 +36,8 @@ export interface User {
   chatStartTime: number | null;
   reportCount?: number;
   banReason?: string | null;
+  banned?: boolean; // Whether the user is banned
+  reports?: number; // Number of reports received from other users
   totalChats?: number;
   chatRating?: number; // User's rating of their chat experience (1-5)
   messageCount?: number; // Number of messages in current chat
@@ -130,7 +132,9 @@ export async function getUser(id: number): Promise<UserWithNew> {
         isAdminAuthenticated: false,
         chatStartTime: null,
         reportCount: 0,
-        totalChats: 0
+        totalChats: 0,
+        reports: 0,
+        banned: false
       };
       
       await collection.insertOne(newUser);
@@ -160,7 +164,9 @@ export async function getUser(id: number): Promise<UserWithNew> {
       reportingPartner: null,
       reportReason: null,
       isAdminAuthenticated: false,
-      chatStartTime: null
+      chatStartTime: null,
+      reports: 0,
+      banned: false
     };
     fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
     return { ...dbObj[id], isNew: true };

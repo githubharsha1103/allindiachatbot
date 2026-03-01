@@ -653,10 +653,28 @@ bot.action("REPORT_CONFIRM", async (ctx) => {
         return safeEditMessageText(ctx, "Report cancelled.", backKeyboard);
     }
     
+    // Fetch the reported user and increment their report count
+    const reportedUser = await getUser(partnerId);
+    const currentReports = reportedUser.reports || 0;
+    const newReportCount = currentReports + 1;
+    
+    // Update the reported user's report count
+    await updateUser(partnerId, { reports: newReportCount });
+    
+    // Auto-ban threshold
+    const BAN_THRESHOLD = 5;
+    let wasBanned = false;
+    
+    // Check if user should be auto-banned
+    if (newReportCount >= BAN_THRESHOLD) {
+        await updateUser(partnerId, { banned: true, banReason: `Auto-banned for reaching ${BAN_THRESHOLD} reports` });
+        wasBanned = true;
+    }
+    
     // Notify the reporter
     await safeEditMessageText(ctx, "Thank you for reporting! 🙏", backKeyboard);
     
-    // Send report to all admins
+    // Send report to all admins with updated report count
     const adminIds = ADMINS.map(id => parseInt(id));
     for (const adminId of adminIds) {
         try {
@@ -665,8 +683,10 @@ bot.action("REPORT_CONFIRM", async (ctx) => {
                 `🚨 *Report Submitted*\n\n` +
                 `📋 *Reason:* ${reportReason}\n` +
                 `👤 *Reported User ID:* ${partnerId}\n` +
-                `👤 *Reported by:* ${ctx.from.id}\n\n` +
-                `Please review this report.`,
+                `👤 *Reported by:* ${ctx.from.id}\n` +
+                `📊 *Total Reports:* ${newReportCount}` +
+                (wasBanned ? `\n\n⚠️ *User has been auto-banned for reaching ${BAN_THRESHOLD} reports!*` : "") +
+                `\n\nPlease review this report.`,
                 { parse_mode: "Markdown" }
             );
         } catch {
