@@ -366,43 +366,72 @@ getTotalChats().then(chats => {
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || "/webhook";
 
-// For production (Render.com), use webhooks when domain is available
-const hasWebhookDomain = process.env.WEBHOOK_URL || process.env.RENDER_EXTERNAL_HOSTNAME;
-if (hasWebhookDomain) {
-  // Build webhook URL - prefer explicit WEBHOOK_URL, fallback to RENDER_EXTERNAL_HOSTNAME
-  const domain = process.env.WEBHOOK_URL || 
-    (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : null);
-  
-  if (!domain) {
-    console.error("[ERROR] - Cannot determine domain for webhook. Set WEBHOOK_URL or RENDER_EXTERNAL_HOSTNAME");
-    process.exit(1);
-  }
-  
+// For production (Render.com), use webhooks
+if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
+  const domain = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
   const webhookUrl = `${domain}${WEBHOOK_PATH}`;
+  
   console.log(`[INFO] - Setting webhook to: ${webhookUrl}`);
-
+  
+  // Set webhook
+  bot.telegram.setWebhook(webhookUrl).then(() => {
+    console.log("[INFO] - Webhook set successfully");
+  }).catch((err: Error) => {
+    console.error("[ERROR] - Failed to set webhook:", err.message);
+  });
+  
+  // Start HTTP server for webhooks
   const app = express();
-
-  // Attach Telegraf webhook middleware
-  app.use(bot.webhookCallback(WEBHOOK_PATH));
-
-  // Health endpoints
-  app.get("/", (_, res) => res.status(200).send("OK"));
-  app.get("/healthz", (_, res) => res.status(200).send("OK"));
-  app.get("/ready", (_, res) => res.status(200).send("READY"));
-  app.get("/health", (_, res) => res.json({ status: "OK", uptime: process.uptime() }));
-
-  app.listen(PORT, "0.0.0.0", async () => {
-    console.log(`[INFO] - Server listening on port ${PORT}`);
-
+  
+  // Use express.json() middleware for parsing Telegram updates
+  app.use(express.json());
+  
+  // Webhook endpoint
+  app.post(WEBHOOK_PATH, async (req: Request, res: Response) => {
+    // Log that we received an update
+    const updateType = req.body.callback_query ? "callback_query" : req.body.message ? "message" : req.body.inline_query ? "inline_query" : "other";
+    console.log("[WEBHOOK] - Received update:", updateType, "from user:", req.body.callback_query?.from?.id || req.body.message?.from?.id);
+    
     try {
-      await bot.telegram.setWebhook(webhookUrl, {
-        drop_pending_updates: true
-      });
-      console.log("[INFO] - Webhook set successfully");
+      // Handle Telegram update and wait for it to complete
+      await bot.handleUpdate(req.body);
+      console.log("[WEBHOOK] - Update processed successfully");
+      res.sendStatus(200);
     } catch (err: any) {
-      console.error("[ERROR] - Failed to set webhook:", err.message);
+      // Log but don't crash on network errors to Telegram API
+      const errMsg = err?.message || 'Unknown error';
+      console.error("[ERROR] - Failed to handle update:", errMsg, err);
+      res.sendStatus(200); // Always return 200 to Telegram to prevent retries
     }
+  });
+  
+  // Health check endpoint - simplified version that doesn't make API calls
+  app.get("/health", (req: Request, res: Response) => {
+    res.json({ 
+      status: "OK", 
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Health check endpoints for Render - MUST return status 200
+  app.get("/healthz", (req: Request, res: Response) => {
+    res.status(200).send("OK");
+  });
+
+  app.get("/ready", (req: Request, res: Response) => {
+    res.status(200).send("READY");
+  });
+
+  // ROOT endpoint - Render's health check hits this
+  app.get("/", (req: Request, res: Response) => {
+    res.status(200).send("OK");
+  });
+
+  // Start the server
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[INFO] - Server listening on port ${PORT}`);
+    console.log(`[INFO] - Health check endpoints active`);
   });
 } else {
   // For local development, use long polling
@@ -450,7 +479,7 @@ process.once("SIGINT", async () => {
   console.log("[INFO] - Stopping bot (SIGINT)...");
   try {
     // In webhook mode, delete the webhook; in polling mode, stop the bot
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
       await bot.telegram.deleteWebhook();
       console.log("[INFO] - Webhook deleted");
     } else if (bot.botInfo) {
@@ -472,7 +501,7 @@ process.once("SIGTERM", async () => {
   console.log("[INFO] - Stopping bot (SIGTERM)...");
   try {
     // In webhook mode, delete the webhook; in polling mode, stop the bot
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
       await bot.telegram.deleteWebhook();
       console.log("[INFO] - Webhook deleted");
     } else if (bot.botInfo) {
