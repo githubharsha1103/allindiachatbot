@@ -367,7 +367,7 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || "/webhook";
 
 // For production (Render.com), use webhooks
-if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
+if (process.env.NODE_ENV === "production") {
   const domain = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
   const webhookUrl = `${domain}${WEBHOOK_PATH}`;
   
