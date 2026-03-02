@@ -301,6 +301,7 @@ export async function banUser(id: number, reason: string = "Banned by admin", ad
   
   // JSON fallback - store as object with metadata
   const fs = require("fs");
+  if (!fs.existsSync(BANS_FILE)) fs.writeFileSync(BANS_FILE, "{}");
   let bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
   
   // Convert array to object format if needed (migration)
@@ -335,6 +336,7 @@ export async function unbanUser(id: number): Promise<void> {
   
   // JSON fallback
   const fs = require("fs");
+  if (!fs.existsSync(BANS_FILE)) fs.writeFileSync(BANS_FILE, "{}");
   let bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
   
   // Handle both array and object formats
@@ -364,6 +366,7 @@ export async function isBanned(id: number): Promise<boolean> {
   
   // JSON fallback
   const fs = require("fs");
+  if (!fs.existsSync(BANS_FILE)) fs.writeFileSync(BANS_FILE, "{}");
   const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
   
   // Handle both array and object formats
@@ -628,6 +631,7 @@ export async function getBanReason(id: number): Promise<string | null> {
   
   // JSON fallback - check object format
   const fs = require("fs");
+  if (!fs.existsSync(BANS_FILE)) fs.writeFileSync(BANS_FILE, "{}");
   const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
   
   // Handle both array (legacy) and object (new) formats
@@ -860,9 +864,49 @@ export async function getReferralStats(userId: number): Promise<ReferralStats> {
     const referralCount = user.referralCount || 0;
     
     // Count active referrals (users who have been active in last 7 days)
-    const allUsers = await getAllUsers();
     const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
     let activeCount = 0;
+    
+    // Use optimized MongoDB queries instead of nested loops
+    if (useMongoDB && !isFallbackMode) {
+        try {
+            const collection = await getUsersCollection();
+            
+            // Count total referrals using referredBy field
+            const totalReferred = await collection.countDocuments({ 
+                referredBy: user.referralCode 
+            });
+            
+            // Count active referrals (active in last 7 days)
+            activeCount = await collection.countDocuments({
+                referredBy: user.referralCode,
+                lastActive: { $gte: sevenDaysAgo }
+            });
+            
+            // Return with Mongo-optimized counts
+            const premiumDaysEarned = user.totalPremiumDaysFromReferral || 0;
+            
+            let currentTier = 0;
+            for (let i = REFERRAL_TIERS.length - 1; i >= 0; i--) {
+                if (totalReferred >= REFERRAL_TIERS[i].count) {
+                    currentTier = i + 1;
+                    break;
+                }
+            }
+            
+            return {
+                total: totalReferred,
+                active: activeCount,
+                premiumDaysEarned,
+                currentTier
+            };
+        } catch (error) {
+            console.error("[ERROR] - MongoDB getReferralStats error:", error);
+        }
+    }
+    
+    // JSON fallback - use existing nested loop (less efficient but works)
+    const allUsers = await getAllUsers();
     
     for (const id of allUsers) {
         const referredUser = await getUser(parseInt(id));
