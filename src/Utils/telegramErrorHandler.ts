@@ -363,43 +363,43 @@ export async function broadcastWithRateLimit(
   const failedUserIds: number[] = [];
   
   // Sequential processing - one message at a time with delay
-  const SEND_DELAY = 40; // 40ms delay between messages (~25 msg/sec, safe limit)
+  const SEND_DELAY = 35; // 35ms delay between messages (~28 msg/sec, safe limit)
   
   console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users (sequential mode)`);
+  console.log(`[BROADCAST] - Estimated time: ~${Math.round(userIds.length * SEND_DELAY / 1000)} seconds`);
   
   for (let i = 0; i < userIds.length; i++) {
     const userId = userIds[i];
     
     try {
-      const result = await sendMessageWithRetry(bot, userId, text, extra);
-      
-      if (result) {
-        success++;
-      } else {
-        failed++;
-        failedUserIds.push(userId);
-      }
+      // Use simple send without retries for speed - just catch errors
+      await bot.telegram.sendMessage(userId, text, extra);
+      success++;
       
     } catch (error: any) {
-      // Check for 429 rate limit error that wasn't handled by sendMessageWithRetry
+      // Check for 429 rate limit error
       if (error?.response?.error_code === 429) {
-        const delay = getRetryDelay(error) * 1000;
-        console.log(`[BROADCAST] - Rate limited! Waiting ${delay}s before continuing...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        const retryAfter = error?.response?.parameters?.retry_after || 5;
+        console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s before continuing...`);
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
         // Retry this user after the delay
-        i--; // Decrement to retry this same user
+        i--; 
         continue;
       }
       
       // Other errors - mark as failed and continue
       failed++;
       failedUserIds.push(userId);
-      console.error(`[BROADCAST] - Error sending to ${userId}:`, error?.message || error);
+      
+      // Only log first few errors to avoid spam
+      if (failed <= 5) {
+        console.error(`[BROADCAST] - Error sending to ${userId}:`, error?.message || error);
+      }
     }
     
-    // Progress logging every 25 users
-    if ((i + 1) % 25 === 0) {
-      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} processed (${success} success, ${failed} failed)`);
+    // Progress logging every 50 users
+    if ((i + 1) % 50 === 0) {
+      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
     }
     
     // Call progress callback
@@ -413,7 +413,7 @@ export async function broadcastWithRateLimit(
     }
   }
   
-  console.log(`[BROADCAST] - Completed! Total: ${userIds.length}, Success: ${success}, Failed: ${failed}`);
+  console.log(`[BROADCAST] - Completed! Total: ${userIds.length}, Sent: ${success}, Failed: ${failed}`);
   
   return { success, failed, failedUserIds };
 }
