@@ -357,63 +357,55 @@ export async function broadcastWithRateLimit(
     onProgress?: (success: number, failed: number) => void;
   }
 ): Promise<{ success: number; failed: number; failedUserIds: number[] }> {
-  const onProgress = extra?.onProgress;
-  let success = 0;
-  let failed = 0;
+  // NON-BLOCKING: Send messages in background without waiting
+  // This prevents hosting platform timeouts (like Render free tier)
+  
   const failedUserIds: number[] = [];
   
-  // Sequential processing - one message at a time with delay
-  const SEND_DELAY = 35; // 35ms delay between messages (~28 msg/sec, safe limit)
+  console.log(`[BROADCAST] - Starting NON-BLOCKING broadcast to ${userIds.length} users`);
+  console.log(`[BROADCAST] - Messages will be sent in background`);
   
-  console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users (sequential mode)`);
-  console.log(`[BROADCAST] - Estimated time: ~${Math.round(userIds.length * SEND_DELAY / 1000)} seconds`);
-  
-  for (let i = 0; i < userIds.length; i++) {
-    const userId = userIds[i];
+  // Start sending in background - DON'T await
+  (async () => {
+    let success = 0;
+    let failed = 0;
+    const SEND_DELAY = 35;
     
-    try {
-      // Use simple send without retries for speed - just catch errors
-      await bot.telegram.sendMessage(userId, text, extra);
-      success++;
+    for (let i = 0; i < userIds.length; i++) {
+      const userId = userIds[i];
       
-    } catch (error: any) {
-      // Check for 429 rate limit error
-      if (error?.response?.error_code === 429) {
-        const retryAfter = error?.response?.parameters?.retry_after || 5;
-        console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s before continuing...`);
-        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-        // Retry this user after the delay
-        i--; 
-        continue;
+      try {
+        await bot.telegram.sendMessage(userId, text, extra);
+        success++;
+        
+      } catch (error: any) {
+        // Check for 429 rate limit
+        if (error?.response?.error_code === 429) {
+          const retryAfter = error?.response?.parameters?.retry_after || 5;
+          console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s...`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+          i--; // Retry this user
+          continue;
+        }
+        
+        failed++;
+        failedUserIds.push(userId);
       }
       
-      // Other errors - mark as failed and continue
-      failed++;
-      failedUserIds.push(userId);
+      // Progress every 50
+      if ((i + 1) % 50 === 0) {
+        console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
+      }
       
-      // Only log first few errors to avoid spam
-      if (failed <= 5) {
-        console.error(`[BROADCAST] - Error sending to ${userId}:`, error?.message || error);
+      // Delay between messages
+      if (i < userIds.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
       }
     }
     
-    // Progress logging every 50 users
-    if ((i + 1) % 50 === 0) {
-      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
-    }
-    
-    // Call progress callback
-    if (onProgress) {
-      onProgress(success, failed);
-    }
-    
-    // Delay between messages to avoid hitting rate limits
-    if (i < userIds.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
-    }
-  }
+    console.log(`[BROADCAST] - Complete! Sent: ${success}, Failed: ${failed}`);
+  })();
   
-  console.log(`[BROADCAST] - Completed! Total: ${userIds.length}, Sent: ${success}, Failed: ${failed}`);
-  
-  return { success, failed, failedUserIds };
+  // Return immediately - don't block
+  return { success: 0, failed: 0, failedUserIds: [] };
 }
