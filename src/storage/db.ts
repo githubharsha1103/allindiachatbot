@@ -81,6 +81,9 @@ async function connectToDatabase(): Promise<Db> {
     await db.collection<Report>("reports").createIndex({ reportedBy: 1 }, { name: "report_reporter_idx" });
     await db.collection<Report>("reports").createIndex({ createdAt: -1 }, { name: "report_date_idx" });
     
+    // Bans collection indexes for fast isBanned() queries
+    await db.collection("bans").createIndex({ telegramId: 1 }, { name: "ban_telegram_idx", unique: true });
+    
     // Performance indexes for admin commands and partner matching
     await db.collection<User>("users").createIndex(
       { lastActive: -1, banned: 1 },
@@ -261,12 +264,34 @@ export async function getAge(id: number): Promise<string | null> {
 
 // ==================== BAN FUNCTIONS ====================
 
-export async function banUser(id: number): Promise<void> {
+// Ban interface with metadata
+export interface Ban {
+  _id?: ObjectId;
+  telegramId: number;
+  reason: string;
+  bannedAt: number;
+  bannedBy: number;
+}
+
+export async function banUser(id: number, reason: string = "Banned by admin", adminId: number = 0): Promise<void> {
   if (useMongoDB && !isFallbackMode) {
     try {
       const database = await connectToDatabase();
-      const bansCollection = database.collection<{ telegramId: number }>("bans");
-      await bansCollection.insertOne({ telegramId: id });
+      const bansCollection = database.collection<Ban>("bans");
+      
+      // Use upsert to update existing ban or insert new
+      await bansCollection.updateOne(
+        { telegramId: id },
+        { 
+          $set: { 
+            telegramId: id, 
+            reason: reason,
+            bannedAt: Date.now(),
+            bannedBy: adminId
+          } 
+        },
+        { upsert: true }
+      );
       return;
     } catch (error) {
       console.error("[ERROR] - MongoDB error:", error);
@@ -274,20 +299,32 @@ export async function banUser(id: number): Promise<void> {
     }
   }
   
-  // JSON fallback
+  // JSON fallback - store as object with metadata
   const fs = require("fs");
-  const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
-  if (!bans.includes(id)) {
-    bans.push(id);
-    fs.writeFileSync(BANS_FILE, JSON.stringify(bans));
+  let bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
+  
+  // Convert array to object format if needed (migration)
+  if (Array.isArray(bans)) {
+    const oldBans = bans;
+    bans = {};
+    for (const id of oldBans) {
+      bans[id] = { reason: "Migrated", bannedAt: Date.now(), bannedBy: 0 };
+    }
   }
+  
+  bans[id] = {
+    reason: reason,
+    bannedAt: Date.now(),
+    bannedBy: adminId
+  };
+  fs.writeFileSync(BANS_FILE, JSON.stringify(bans, null, 2));
 }
 
 export async function unbanUser(id: number): Promise<void> {
   if (useMongoDB && !isFallbackMode) {
     try {
       const database = await connectToDatabase();
-      const bansCollection = database.collection<{ telegramId: number }>("bans");
+      const bansCollection = database.collection<Ban>("bans");
       await bansCollection.deleteOne({ telegramId: id });
       return;
     } catch (error) {
@@ -298,19 +335,25 @@ export async function unbanUser(id: number): Promise<void> {
   
   // JSON fallback
   const fs = require("fs");
-  const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
-  const index = bans.indexOf(id);
-  if (index > -1) {
-    bans.splice(index, 1);
-    fs.writeFileSync(BANS_FILE, JSON.stringify(bans));
+  let bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
+  
+  // Handle both array and object formats
+  if (Array.isArray(bans)) {
+    const index = bans.indexOf(id);
+    if (index > -1) {
+      bans.splice(index, 1);
+    }
+  } else if (bans[id]) {
+    delete bans[id];
   }
+  fs.writeFileSync(BANS_FILE, JSON.stringify(bans, null, 2));
 }
 
 export async function isBanned(id: number): Promise<boolean> {
   if (useMongoDB && !isFallbackMode) {
     try {
       const database = await connectToDatabase();
-      const bansCollection = database.collection<{ telegramId: number }>("bans");
+      const bansCollection = database.collection<Ban>("bans");
       const ban = await bansCollection.findOne({ telegramId: id });
       return !!ban;
     } catch (error) {
@@ -322,7 +365,12 @@ export async function isBanned(id: number): Promise<boolean> {
   // JSON fallback
   const fs = require("fs");
   const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
-  return bans.includes(id);
+  
+  // Handle both array and object formats
+  if (Array.isArray(bans)) {
+    return bans.includes(id);
+  }
+  return !!bans[id];
 }
 
 export async function readBans(): Promise<number[]> {
@@ -563,8 +611,31 @@ export async function incrementReportCount(userId: number): Promise<number> {
 }
 
 export async function getBanReason(id: number): Promise<string | null> {
-  const user = await getUser(id);
-  return user.banReason || null;
+  // First try new bans collection with metadata
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const database = await connectToDatabase();
+      const bansCollection = database.collection<Ban>("bans");
+      const ban = await bansCollection.findOne({ telegramId: id });
+      if (ban) {
+        return ban.reason;
+      }
+      return null;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getBanReason error:", error);
+    }
+  }
+  
+  // JSON fallback - check object format
+  const fs = require("fs");
+  const bans = JSON.parse(fs.readFileSync(BANS_FILE, "utf8"));
+  
+  // Handle both array (legacy) and object (new) formats
+  if (Array.isArray(bans)) {
+    return bans.includes(id) ? "Banned" : null;
+  }
+  
+  return bans[id]?.reason || null;
 }
 
 export async function deleteUser(id: number, reason?: string): Promise<boolean> {

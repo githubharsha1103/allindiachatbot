@@ -646,13 +646,14 @@ export function initAdminActions(bot: ExtraTelegraf) {
     bot.action(/ADMIN_BAN_USER_(\d+)/, async (ctx) => {
         await safeAnswerCbQuery(ctx);
         const userId = parseInt(ctx.match[1]);
+        const adminId = ctx.from?.id || 0;
         const reason = "Banned by admin";
         
         // Check if user is in an active chat and terminate it
         const partnerId = await terminateUserChat(ctx, bot, userId);
         
-        // Ban the user
-        await banUser(userId);
+        // Ban the user with reason and admin ID
+        await banUser(userId, reason, adminId);
         
         // Show feedback about chat termination if applicable
         if (partnerId) {
