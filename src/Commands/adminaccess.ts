@@ -93,21 +93,42 @@ export default {
         // Check if this is a private chat
         const isPrivateChat = ctx.from.id === ctx.chat?.id;
         
+        // Get bot username safely
+        const botUsername = bot.botInfo?.username || "the bot";
+        
         if (!isPrivateChat) {
             // Tell user to check their private chat with the bot
-            await ctx.reply(
-                "🔐 I've sent the admin panel to your private chat with me.\n" +
-                "Please check @" + bot.botInfo?.username + " in a private conversation.",
-                { parse_mode: "Markdown" }
-            );
+            try {
+                await ctx.reply(
+                    `🔐 I've sent the admin panel to my private chat with you.\n` +
+                    `Please check @${botUsername} in a private conversation.`,
+                    { parse_mode: "Markdown" }
+                );
+            } catch (error) {
+                console.error("[ADMIN] Failed to send instruction to group:", error);
+            }
         }
         
-        // Always send admin panel to private chat
-        return ctx.telegram.sendMessage(
-            userId,
-            "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
-            { parse_mode: "Markdown", ...mainKeyboard }
-        );
+        // Always send admin panel to private chat with error handling
+        try {
+            return await ctx.telegram.sendMessage(
+                userId,
+                "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
+                { parse_mode: "Markdown", ...mainKeyboard }
+            );
+        } catch (error: any) {
+            // Handle case where admin hasn't started a conversation with bot
+            if (error.description?.includes("chat not found") || error.description?.includes("bot was blocked by the user")) {
+                console.log("[ADMIN] Admin hasn't started conversation with bot yet");
+                return ctx.reply(
+                    "⚠️ Please start a private chat with me first before using admin panel.\n" +
+                    `Click here: t.me/${botUsername}`,
+                    { parse_mode: "Markdown" }
+                );
+            }
+            console.error("[ADMIN] Failed to send admin panel:", error);
+            return ctx.reply("⚠️ Failed to open admin panel. Please try again.", { parse_mode: "Markdown" });
+        }
     }
 } as Command;
 
