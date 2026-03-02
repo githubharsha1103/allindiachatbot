@@ -2,6 +2,7 @@ import { Context, Markup } from "telegraf";
 import { Command } from "../Utils/commandHandler";
 import { ExtraTelegraf } from "..";
 import { getInactiveUsers, getUserStats } from "../storage/db";
+import { broadcastWithRateLimit, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
 
 const backKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("🔙 Back to Menu", "ADMIN_BACK")]
@@ -211,38 +212,20 @@ ${message}
             [Markup.button.callback("🚀 Start Chatting", "START_SEARCH")]
         ]);
 
-        let sent = 0;
-        let failed = 0;
-        const BATCH_SIZE = 50; // Process 50 users at a time
-        const BATCH_DELAY = 2000; // Wait 2 seconds between batches
-
-        // Process in batches to avoid blocking the bot
-        for (let i = 0; i < inactiveUsers.length; i += BATCH_SIZE) {
-            const batch = inactiveUsers.slice(i, i + BATCH_SIZE);
-            
-            // Process batch in parallel (max 10 concurrent)
-            const batchPromises = batch.slice(0, 10).map(async (id) => {
-                const userId = parseInt(id);
-                if (isNaN(userId)) return;
-                
-                try {
-                    await bot.telegram.sendMessage(userId, introText, { parse_mode: "HTML", ...keyboard });
-                    sent++;
-                } catch {
-                    failed++;
-                }
-            });
-            
-            await Promise.all(batchPromises);
-            
-            // Yield to event loop between batches to keep bot responsive
-            if (i + BATCH_SIZE < inactiveUsers.length) {
-                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-            }
-        }
+        // Use broadcastWithRateLimit for sequential safe sending
+        const userIds = inactiveUsers.map(id => parseInt(id)).filter(id => !isNaN(id));
+        
+        console.log(`[REENGAGE_7] - Starting to send to ${userIds.length} users`);
+        
+        const result = await broadcastWithRateLimit(
+            bot,
+            userIds,
+            introText,
+            { parse_mode: "HTML", reply_markup: keyboard.reply_markup }
+        );
 
         await safeEditMessageText(ctx,
-            `<b>✅ 7-Day Re-engagement Complete!</b>\n\n📤 Sent: ${sent}\n❌ Failed: ${failed}`,
+            `<b>✅ 7-Day Re-engagement Complete!</b>\n\n📤 Sent: ${result.success}\n❌ Failed: ${result.failed}\n📊 Total: ${userIds.length}`,
             { parse_mode: "HTML", ...backKeyboard }
         );
     });
@@ -275,38 +258,20 @@ ${message}
             [Markup.button.callback("🚀 Let's Chat!", "START_SEARCH")]
         ]);
 
-        let sent = 0;
-        let failed = 0;
-        const BATCH_SIZE = 50; // Process 50 users at a time
-        const BATCH_DELAY = 2000; // Wait 2 seconds between batches
-
-        // Process in batches to avoid blocking the bot
-        for (let i = 0; i < inactiveUsers.length; i += BATCH_SIZE) {
-            const batch = inactiveUsers.slice(i, i + BATCH_SIZE);
-            
-            // Process batch in parallel (max 10 concurrent)
-            const batchPromises = batch.slice(0, 10).map(async (id) => {
-                const userId = parseInt(id);
-                if (isNaN(userId)) return;
-                
-                try {
-                    await bot.telegram.sendMessage(userId, introText, { parse_mode: "HTML", ...keyboard });
-                    sent++;
-                } catch {
-                    failed++;
-                }
-            });
-            
-            await Promise.all(batchPromises);
-            
-            // Yield to event loop between batches to keep bot responsive
-            if (i + BATCH_SIZE < inactiveUsers.length) {
-                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-            }
-        }
+        // Use broadcastWithRateLimit for sequential safe sending
+        const userIds = inactiveUsers.map(id => parseInt(id)).filter(id => !isNaN(id));
+        
+        console.log(`[REENGAGE_30] - Starting to send to ${userIds.length} users`);
+        
+        const result = await broadcastWithRateLimit(
+            bot,
+            userIds,
+            introText,
+            { parse_mode: "HTML", reply_markup: keyboard.reply_markup }
+        );
 
         await safeEditMessageText(ctx,
-            `<b>✅ 30-Day Re-engagement Complete!</b>\n\n📤 Sent: ${sent}\n❌ Failed: ${failed}`,
+            `<b>✅ 30-Day Re-engagement Complete!</b>\n\n📤 Sent: ${result.success}\n❌ Failed: ${result.failed}\n📊 Total: ${userIds.length}`,
             { parse_mode: "HTML", ...backKeyboard }
         );
     });

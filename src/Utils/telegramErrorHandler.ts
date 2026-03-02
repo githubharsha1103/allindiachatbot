@@ -351,21 +351,28 @@ export async function broadcastWithRateLimit(
   bot: ExtraTelegraf,
   userIds: number[],
   text: string,
-  onProgress?: (success: number, failed: number) => void
+  extra?: {
+    parse_mode?: "Markdown" | "HTML";
+    reply_markup?: any;
+    onProgress?: (success: number, failed: number) => void;
+  }
 ): Promise<{ success: number; failed: number; failedUserIds: number[] }> {
+  const onProgress = extra?.onProgress;
   let success = 0;
   let failed = 0;
   const failedUserIds: number[] = [];
-  const BATCH_SIZE = 10; // Process 10 users concurrently
-  const BATCH_DELAY = 2000; // Wait 2 seconds between batches
-
-  // Process in batches to keep bot responsive
-  for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-    const batch = userIds.slice(i, i + BATCH_SIZE);
+  
+  // Sequential processing - one message at a time with delay
+  const SEND_DELAY = 40; // 40ms delay between messages (~25 msg/sec, safe limit)
+  
+  console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users (sequential mode)`);
+  
+  for (let i = 0; i < userIds.length; i++) {
+    const userId = userIds[i];
     
-    // Process batch in parallel
-    const batchPromises = batch.map(async (userId) => {
-      const result = await sendMessageWithRetry(bot, userId, text);
+    try {
+      const result = await sendMessageWithRetry(bot, userId, text, extra);
+      
       if (result) {
         success++;
       } else {
@@ -373,18 +380,40 @@ export async function broadcastWithRateLimit(
         failedUserIds.push(userId);
       }
       
-      if (onProgress) {
-        onProgress(success, failed);
+    } catch (error: any) {
+      // Check for 429 rate limit error that wasn't handled by sendMessageWithRetry
+      if (error?.response?.error_code === 429) {
+        const delay = getRetryDelay(error) * 1000;
+        console.log(`[BROADCAST] - Rate limited! Waiting ${delay}s before continuing...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        // Retry this user after the delay
+        i--; // Decrement to retry this same user
+        continue;
       }
-    });
+      
+      // Other errors - mark as failed and continue
+      failed++;
+      failedUserIds.push(userId);
+      console.error(`[BROADCAST] - Error sending to ${userId}:`, error?.message || error);
+    }
     
-    await Promise.all(batchPromises);
+    // Progress logging every 25 users
+    if ((i + 1) % 25 === 0) {
+      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} processed (${success} success, ${failed} failed)`);
+    }
     
-    // Yield to event loop between batches
-    if (i + BATCH_SIZE < userIds.length) {
-      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+    // Call progress callback
+    if (onProgress) {
+      onProgress(success, failed);
+    }
+    
+    // Delay between messages to avoid hitting rate limits
+    if (i < userIds.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
     }
   }
+  
+  console.log(`[BROADCAST] - Completed! Total: ${userIds.length}, Success: ${success}, Failed: ${failed}`);
   
   return { success, failed, failedUserIds };
 }
