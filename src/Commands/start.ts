@@ -3,57 +3,25 @@ import { Command } from "../Utils/commandHandler";
 import { ExtraTelegraf } from "..";
 import { getUser, updateUser, updateLastActive, processReferral } from "../storage/db";
 
+// Import centralized keyboards
+import {
+    welcomeKeyboard,
+    setupGenderKeyboard,
+    setupAgeKeyboard,
+    setupStateKeyboard,
+    mainMenuKeyboard,
+    groupJoinKeyboard
+} from "../keyboards/mainMenu";
+
 // Setup step constants
 export const SETUP_STEP_GENDER = "gender";
 export const SETUP_STEP_AGE = "age";
 export const SETUP_STEP_STATE = "state";
 export const SETUP_STEP_DONE = "done";
 
-// Welcome keyboard with Get Started button
-const welcomeKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🌟 Get Started", "SETUP_GENDER_MALE")]
-]);
-
-// Gender selection - NO BACK/CANCEL option (must complete setup)
-const genderKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("👨 Male", "SETUP_GENDER_MALE")],
-    [Markup.button.callback("👩 Female", "SETUP_GENDER_FEMALE")]
-]);
-
-// Age selection - NO BACK/CANCEL option (must complete setup)
-const ageKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("13-17", "SETUP_AGE_13_17")],
-    [Markup.button.callback("18-25", "SETUP_AGE_18_25")],
-    [Markup.button.callback("26-40", "SETUP_AGE_26_40")],
-    [Markup.button.callback("40+", "SETUP_AGE_40_PLUS")],
-    [Markup.button.callback("📝 Type Age", "SETUP_AGE_MANUAL")]
-]);
-
-// State selection - NO BACK/CANCEL option (must complete setup)
-const stateKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟢 Telangana", "SETUP_STATE_TELANGANA")],
-    [Markup.button.callback("🔵 Andhra Pradesh", "SETUP_STATE_AP")],
-    [Markup.button.callback("🇮🇳 Other Indian State", "SETUP_STATE_OTHER")],
-    [Markup.button.callback("🌍 Outside India", "SETUP_COUNTRY_OTHER")]
-]);
-
-// Age manual input keyboard
+// Age manual input keyboard (local only - not in central file)
 const ageManualKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_AGE")]
-]);
-
-// Main menu keyboard
-const mainMenuKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🔍 Search", "START_SEARCH")],
-    [Markup.button.callback("⚙️ Settings", "OPEN_SETTINGS")],
-    [Markup.button.callback("❓ Help", "START_HELP")]
-]);
-
-// Group join keyboard
-const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/teluguanomychat";
-const groupJoinKeyboard = Markup.inlineKeyboard([
-    [Markup.button.url("📢 Join Our Group", GROUP_INVITE_LINK)],
-    [Markup.button.callback("✅ I've Joined", "VERIFY_GROUP_JOIN")]
 ]);
 
 export default {
@@ -134,7 +102,7 @@ export default {
                 "📝 <b>Step 2 of 3</b>\n\n" +
                 "🎂 <b>Select your age range:</b>\n" +
                 "(This helps us match you with people in similar age groups)",
-                { parse_mode: "HTML", ...ageKeyboard }
+                { parse_mode: "HTML", ...setupAgeKeyboard }
             );
             return;
         }
@@ -145,7 +113,7 @@ export default {
                 "📝 <b>Step 3 of 3</b>\n\n" +
                 "📍 <b>Select your location:</b>\n" +
                 "(Helps match you with nearby people)",
-                { parse_mode: "HTML", ...stateKeyboard }
+                { parse_mode: "HTML", ...setupStateKeyboard }
             );
             return;
         }
@@ -166,4 +134,4 @@ export default {
 } as Command;
 
 // Export keyboards for action handlers
-export { mainMenuKeyboard, genderKeyboard, ageKeyboard, stateKeyboard, ageManualKeyboard };
+export { mainMenuKeyboard, setupGenderKeyboard, setupAgeKeyboard, setupStateKeyboard, ageManualKeyboard };

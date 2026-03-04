@@ -10,8 +10,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.waitingForBroadcast = void 0;
+exports.waitingForUserId = exports.waitingForBroadcast = void 0;
 exports.initAdminActions = initAdminActions;
+exports.showUserDetails = showUserDetails;
 const telegraf_1 = require("telegraf");
 const db_1 = require("../storage/db");
 const ADMINS = ((_a = process.env.ADMIN_IDS) === null || _a === void 0 ? void 0 : _a.split(",")) || [];
@@ -46,21 +47,28 @@ function formatDuration(ms) {
 // Admin main menu with clear options
 const mainKeyboard = telegraf_1.Markup.inlineKeyboard([
     [telegraf_1.Markup.button.callback("👥 View All Users", "ADMIN_USERS")],
+    [telegraf_1.Markup.button.callback("🔍 Search by ID", "ADMIN_SEARCH_BY_ID")],
     [telegraf_1.Markup.button.callback("🚫 View Bans", "ADMIN_BANS")],
     [telegraf_1.Markup.button.callback("📊 Bot Statistics", "ADMIN_STATS")],
     [telegraf_1.Markup.button.callback("💬 Active Chats", "ADMIN_ACTIVE_CHATS")],
     [telegraf_1.Markup.button.callback("📢 Broadcast Message", "ADMIN_BROADCAST")],
     [telegraf_1.Markup.button.callback("📣 Re-engagement", "ADMIN_REENGAGE")],
-    [telegraf_1.Markup.button.callback("👤 Ban User", "ADMIN_BAN_USER")],
+    [telegraf_1.Markup.button.callback("📋 View Reports", "ADMIN_VIEW_REPORTS")],
     [telegraf_1.Markup.button.callback("🔗 Referral Stats", "ADMIN_REFERRALS")],
     [telegraf_1.Markup.button.callback("🔒 Logout", "ADMIN_LOGOUT")]
 ]);
 const backKeyboard = telegraf_1.Markup.inlineKeyboard([
     [telegraf_1.Markup.button.callback("🔙 Back to Menu", "ADMIN_BACK")]
 ]);
+// Cancel keyboard for search by ID
+const searchCancelKeyboard = telegraf_1.Markup.inlineKeyboard([
+    [telegraf_1.Markup.button.callback("⬅️ Cancel", "ADMIN_SEARCH_BY_ID_CANCEL")]
+]);
 const userPages = new Map();
 // Track admins waiting for broadcast input
 exports.waitingForBroadcast = new Set();
+// Track admins waiting for user ID search input
+exports.waitingForUserId = new Set();
 function safeAnswerCbQuery(ctx, text) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
@@ -153,6 +161,26 @@ function initAdminActions(bot) {
             return;
         userPages.set(ctx.from.id, 0);
         yield showUsersPage(ctx, 0);
+    }));
+    // Search user by ID
+    bot.action("ADMIN_SEARCH_BY_ID", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        // Re-validate admin permissions
+        if (!validateAdmin(ctx)) {
+            yield safeAnswerCbQuery(ctx, "Unauthorized");
+            return;
+        }
+        yield safeAnswerCbQuery(ctx);
+        const adminId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
+        if (!adminId)
+            return;
+        // Set waiting flag
+        exports.waitingForUserId.add(adminId);
+        console.log(`[ADMIN] - Admin ${adminId} started search by ID, waitingForUserId.size = ${exports.waitingForUserId.size}`);
+        yield safeEditMessageText(ctx, "🔍 *Search User by ID*\n\n" +
+            "✍️ Enter the User ID you want to search for.\n\n" +
+            "Example: `123456789`\n\n" +
+            "Use the button below to cancel.", Object.assign({ parse_mode: "Markdown" }, searchCancelKeyboard));
     }));
     // View bans
     bot.action("ADMIN_BANS", (ctx) => __awaiter(this, void 0, void 0, function* () {
@@ -290,19 +318,19 @@ function initAdminActions(bot) {
         // Clear chat start time
         yield (0, db_1.updateUser)(user1, { chatStartTime: null });
         yield (0, db_1.updateUser)(user2, { chatStartTime: null });
-        // Notify both users that chat was terminated by admin
+        // Report keyboard - same as when partner leaves normally
+        const reportKeyboard = telegraf_1.Markup.inlineKeyboard([
+            [telegraf_1.Markup.button.callback("🚨 Report User", "OPEN_REPORT")]
+        ]);
+        // Notify both users that chat was terminated (show as partner left)
         try {
-            yield ctx.telegram.sendMessage(user1, `🚫 *Chat Terminated by Admin*\n\n` +
-                `Your chat has been ended by an administrator.\n\n` +
-                `Use /search to find a new partner.`, { parse_mode: "Markdown" });
+            yield ctx.telegram.sendMessage(user1, `🚫 Partner left the chat\n\n/next - Find new partner\n\n━━━━━━━━━━━━━━━━━\nTo report this chat:`, Object.assign({ parse_mode: "Markdown" }, reportKeyboard));
         }
         catch (e) {
             // User might have blocked the bot
         }
         try {
-            yield ctx.telegram.sendMessage(user2, `🚫 *Chat Terminated by Admin*\n\n` +
-                `Your chat has been ended by an administrator.\n\n` +
-                `Use /search to find a new partner.`, { parse_mode: "Markdown" });
+            yield ctx.telegram.sendMessage(user2, `🚫 Partner left the chat\n\n/next - Find new partner\n\n━━━━━━━━━━━━━━━━━\nTo report this chat:`, Object.assign({ parse_mode: "Markdown" }, reportKeyboard));
         }
         catch (e) {
             // User might have blocked the bot
@@ -354,18 +382,61 @@ function initAdminActions(bot) {
             "Broadcast cancelled.\n\n" +
             "Use the button below to return to menu.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
     }));
-    // Ban user
-    bot.action("ADMIN_BAN_USER", (ctx) => __awaiter(this, void 0, void 0, function* () {
+    // Cancel search by ID
+    bot.action("ADMIN_SEARCH_BY_ID_CANCEL", (ctx) => __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        yield safeAnswerCbQuery(ctx);
+        const adminId = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id;
+        if (adminId) {
+            exports.waitingForUserId.delete(adminId);
+        }
+        yield safeEditMessageText(ctx, "🔍 *Search User by ID*\n\n" +
+            "Search cancelled.\n\n" +
+            "Use the button below to return to menu.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+    }));
+    // View Reports (SCALABLE - uses new Report collection)
+    bot.action("ADMIN_VIEW_REPORTS", (ctx) => __awaiter(this, void 0, void 0, function* () {
         // Re-validate admin permissions
         if (!validateAdmin(ctx)) {
             yield safeAnswerCbQuery(ctx, "Unauthorized");
             return;
         }
         yield safeAnswerCbQuery(ctx);
-        yield safeEditMessageText(ctx, "👤 *Ban User*\n\n" +
-            "To ban a user, use the /ban command with their User ID.\n\n" +
-            "Example: /ban 1130645873\n\n" +
-            "Use the button below to return to menu.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+        // Use new scalable getGroupedReports instead of looping through all users
+        const reportedUsers = yield (0, db_1.getGroupedReports)(10);
+        if (reportedUsers.length === 0) {
+            yield safeEditMessageText(ctx, "📋 *Reported Users*\n\nNo users have been reported.\n\nUse the button below to return to menu.", Object.assign({ parse_mode: "Markdown" }, backKeyboard));
+            return;
+        }
+        // Build list with report reasons
+        let reportList = "📋 Reported Users (Top 10)\n\n";
+        reportList += `Total Reported Users: ${reportedUsers.length}\n\n`;
+        const reportButtons = [];
+        for (const { userId, count, latestReason, reporters } of reportedUsers) {
+            const reporterList = reporters.slice(0, 3).join(", ") || "Various";
+            reportList += `👤 \`${userId}\`\n`;
+            reportList += `   📊 Reports: ${count}\n`;
+            reportList += `   📝 Reason: ${latestReason || "No reason"}\n`;
+            reportList += `   👁️ Reported by: ${reporterList}\n\n`;
+            // Check if user is already banned
+            const userBanned = yield (0, db_1.isBanned)(userId);
+            if (!userBanned) {
+                reportButtons.push([
+                    telegraf_1.Markup.button.callback(`🚫 Ban ${userId}`, `ADMIN_BAN_USER_${userId}`),
+                    telegraf_1.Markup.button.callback(`👁️ View ${userId}`, `ADMIN_USER_${userId}`)
+                ]);
+            }
+            else {
+                reportButtons.push([
+                    telegraf_1.Markup.button.callback(`✅ Already Banned ${userId}`, `ADMIN_USER_${userId}`)
+                ]);
+            }
+        }
+        const keyboard = telegraf_1.Markup.inlineKeyboard([
+            ...reportButtons,
+            [telegraf_1.Markup.button.callback("🔙 Back to Menu", "ADMIN_BACK")]
+        ]);
+        yield safeEditMessageText(ctx, reportList + "Select an action:", Object.assign({ parse_mode: "Markdown" }, keyboard));
     }));
     // Re-engagement campaign
     bot.action("ADMIN_REENGAGE", (ctx) => __awaiter(this, void 0, void 0, function* () {
@@ -447,14 +518,56 @@ function initAdminActions(bot) {
         const userId = parseInt(ctx.match[1]);
         yield showUserDetails(ctx, userId);
     }));
-    // Ban user from details
+    // Ban user from details - Also terminates active chats
     bot.action(/ADMIN_BAN_USER_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
         yield safeAnswerCbQuery(ctx);
         const userId = parseInt(ctx.match[1]);
         const reason = "Banned by admin";
+        // Check if user is in an active chat and terminate it
+        const partnerId = yield terminateUserChat(ctx, bot, userId);
+        // Ban the user
         yield (0, db_1.banUser)(userId);
+        // Show feedback about chat termination if applicable
+        if (partnerId) {
+            yield safeAnswerCbQuery(ctx, `User banned. Partner ${partnerId} removed from chat. ✅`);
+        }
         yield showUserDetails(ctx, userId);
     }));
+    // Helper function to terminate user's active chat
+    function terminateUserChat(ctx, botInstance, userId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const runningChats = botInstance.runningChats;
+            // Check if user is in active chat
+            const userIndex = runningChats.indexOf(userId);
+            if (userIndex === -1) {
+                return null; // User is not in an active chat
+            }
+            // Find partner (if user is at even index, partner is at odd index, and vice versa)
+            const partnerId = userIndex % 2 === 0 ? runningChats[userIndex + 1] : runningChats[userIndex - 1];
+            if (!partnerId) {
+                return null;
+            }
+            console.log(`[BAN] - Terminating chat between ${userId} and ${partnerId}`);
+            // Remove both users from runningChats
+            botInstance.runningChats = runningChats.filter(id => id !== userId && id !== partnerId);
+            // Clear message maps
+            botInstance.messageMap.delete(userId);
+            botInstance.messageMap.delete(partnerId);
+            botInstance.messageCountMap.delete(userId);
+            botInstance.messageCountMap.delete(partnerId);
+            // Reset chat start times for both users
+            yield (0, db_1.updateUser)(userId, { chatStartTime: null });
+            yield (0, db_1.updateUser)(partnerId, { chatStartTime: null });
+            // Notify partner that chat ended
+            try {
+                yield ctx.telegram.sendMessage(partnerId, "🚫 Your chat partner has been removed from the platform.\n\n/next - Find new partner");
+            }
+            catch (error) {
+                console.log(`[BAN] - Could not notify partner ${partnerId}:`, error);
+            }
+            return partnerId;
+        });
+    }
     // Unban user from details
     bot.action(/ADMIN_UNBAN_USER_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
         yield safeAnswerCbQuery(ctx);
@@ -484,17 +597,32 @@ function initAdminActions(bot) {
         // Return to users list
         yield showUsersPage(ctx, 0);
     }));
-    // Edit user name
-    bot.action(/ADMIN_EDIT_NAME_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
+    // Edit user gender
+    bot.action(/ADMIN_EDIT_GENDER_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
         yield safeAnswerCbQuery(ctx);
         const userId = parseInt(ctx.match[1]);
+        const user = yield (0, db_1.getUser)(userId);
+        const currentGender = (user === null || user === void 0 ? void 0 : user.gender) || "Not set";
         const keyboard = telegraf_1.Markup.inlineKeyboard([
+            [telegraf_1.Markup.button.callback("👨 Male", `ADMIN_SET_GENDER_MALE_${userId}`)],
+            [telegraf_1.Markup.button.callback("👩 Female", `ADMIN_SET_GENDER_FEMALE_${userId}`)],
             [telegraf_1.Markup.button.callback("🔙 Back", `ADMIN_USER_${userId}`)]
         ]);
-        yield safeEditMessageText(ctx, `<b>📝 Edit Name</b>\n\nUser ID: <code>${userId}</code>\n\n` +
-            `To change the user's name, use:\n` +
-            `/setname ${userId} NewName\n\n` +
-            `Use the button below to go back.`, Object.assign({ parse_mode: "HTML" }, keyboard));
+        yield safeEditMessageText(ctx, `<b>👫 Edit Gender</b>\n\nUser ID: <code>${userId}</code>\nCurrent Gender: <b>${currentGender}</b>\n\nSelect new gender:`, Object.assign({ parse_mode: "HTML" }, keyboard));
+    }));
+    // Set user gender to male
+    bot.action(/ADMIN_SET_GENDER_MALE_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
+        yield safeAnswerCbQuery(ctx, "Gender updated to Male ✅");
+        const userId = parseInt(ctx.match[1]);
+        yield (0, db_1.updateUser)(userId, { gender: "male" });
+        yield showUserDetails(ctx, userId);
+    }));
+    // Set user gender to female
+    bot.action(/ADMIN_SET_GENDER_FEMALE_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
+        yield safeAnswerCbQuery(ctx, "Gender updated to Female ✅");
+        const userId = parseInt(ctx.match[1]);
+        yield (0, db_1.updateUser)(userId, { gender: "female" });
+        yield showUserDetails(ctx, userId);
     }));
     // Reset user chats
     bot.action(/ADMIN_RESET_CHATS_(\d+)/, (ctx) => __awaiter(this, void 0, void 0, function* () {
@@ -658,7 +786,7 @@ function showUserDetails(ctx, userId) {
         const keyboard = telegraf_1.Markup.inlineKeyboard([
             actionButtons,
             premiumButtons,
-            [telegraf_1.Markup.button.callback("✏️ Edit Name", `ADMIN_EDIT_NAME_${userId}`)],
+            [telegraf_1.Markup.button.callback("👫 Edit Gender", `ADMIN_EDIT_GENDER_${userId}`)],
             [telegraf_1.Markup.button.callback("🔄 Reset Chats", `ADMIN_RESET_CHATS_${userId}`)],
             [telegraf_1.Markup.button.callback("🔄 Reset Reports", `ADMIN_RESET_REPORTS_${userId}`)],
             [telegraf_1.Markup.button.callback("🗑️ Delete User", `ADMIN_DELETE_USER_${userId}`)],

@@ -24,6 +24,10 @@ exports.isBanned = isBanned;
 exports.readBans = readBans;
 exports.getAllUsers = getAllUsers;
 exports.getReportCount = getReportCount;
+exports.createReport = createReport;
+exports.getGroupedReports = getGroupedReports;
+exports.getUserReports = getUserReports;
+exports.incrementReportCount = incrementReportCount;
 exports.getBanReason = getBanReason;
 exports.deleteUser = deleteUser;
 exports.getTotalChats = getTotalChats;
@@ -71,6 +75,17 @@ function connectToDatabase() {
             yield db.collection("users").createIndex({ telegramId: 1 }, { unique: true });
             yield db.collection("users").createIndex({ referralCode: 1 });
             yield db.collection("users").createIndex({ referredBy: 1 });
+            // Reports collection indexes for scalable report system
+            yield db.collection("reports").createIndex({ reportedUser: 1 }, { name: "report_user_idx" });
+            yield db.collection("reports").createIndex({ reportedBy: 1 }, { name: "report_reporter_idx" });
+            yield db.collection("reports").createIndex({ createdAt: -1 }, { name: "report_date_idx" });
+            // Performance indexes for admin commands and partner matching
+            yield db.collection("users").createIndex({ lastActive: -1, banned: 1 }, { name: "admin_broadcast_idx" });
+            yield db.collection("users").createIndex({ reports: -1 }, { name: "reports_idx" });
+            yield db.collection("users").createIndex({ gender: 1, preference: 1, premium: 1, banned: 1 }, { name: "partner_match_idx" });
+            yield db.collection("users").createIndex({ premium: 1, premiumExpiry: 1 }, { name: "premium_idx" });
+            yield db.collection("users").createIndex({ state: 1, gender: 1 }, { name: "location_gender_idx" });
+            console.log("[INFO] - Database indexes created successfully");
             return db;
         }
         catch (error) {
@@ -128,7 +143,9 @@ function getUser(id) {
                     isAdminAuthenticated: false,
                     chatStartTime: null,
                     reportCount: 0,
-                    totalChats: 0
+                    totalChats: 0,
+                    reports: 0,
+                    banned: false
                 };
                 yield collection.insertOne(newUser);
                 return Object.assign(Object.assign({}, newUser), { isNew: true });
@@ -157,7 +174,9 @@ function getUser(id) {
                 reportingPartner: null,
                 reportReason: null,
                 isAdminAuthenticated: false,
-                chatStartTime: null
+                chatStartTime: null,
+                reports: 0,
+                banned: false
             };
             fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
             return Object.assign(Object.assign({}, dbObj[id]), { isNew: true });
@@ -337,8 +356,182 @@ function getAllUsers() {
 }
 function getReportCount(id) {
     return __awaiter(this, void 0, void 0, function* () {
+        // First try new scalable report storage
+        if (useMongoDB && !isFallbackMode) {
+            try {
+                const collection = yield getReportsCollection();
+                const count = yield collection.countDocuments({ reportedUser: id });
+                return count;
+            }
+            catch (error) {
+                console.error("[ERROR] - MongoDB getReportCount error:", error);
+            }
+        }
+        // Fallback to legacy user field
         const user = yield getUser(id);
-        return user.reportCount || 0;
+        return user.reports || 0;
+    });
+}
+// Get reports collection
+function getReportsCollection() {
+    return __awaiter(this, void 0, void 0, function* () {
+        const database = yield connectToDatabase();
+        return database.collection("reports");
+    });
+}
+// Create a new report (scalable)
+function createReport(reportedUserId, reportedByUserId, reason) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (useMongoDB && !isFallbackMode) {
+            try {
+                const collection = yield getReportsCollection();
+                yield collection.insertOne({
+                    reportedUser: reportedUserId,
+                    reportedBy: reportedByUserId,
+                    reason: reason,
+                    createdAt: Date.now()
+                });
+                // Also update legacy field for backward compatibility
+                yield incrementReportCount(reportedUserId);
+                return;
+            }
+            catch (error) {
+                console.error("[ERROR] - MongoDB createReport error:", error);
+            }
+        }
+        // JSON/file fallback - update user fields for backward compatibility
+        const fs = require("fs");
+        const dbObj = JSON.parse(fs.readFileSync(JSON_FILE, "utf8"));
+        // Store report in user's reports array
+        if (!dbObj[reportedUserId]) {
+            dbObj[reportedUserId] = {};
+        }
+        if (!dbObj[reportedUserId].reportHistory) {
+            dbObj[reportedUserId].reportHistory = [];
+        }
+        dbObj[reportedUserId].reportHistory.push({
+            reportedBy: reportedByUserId,
+            reason: reason,
+            createdAt: Date.now()
+        });
+        // Update legacy fields
+        const currentReports = ((_a = dbObj[reportedUserId]) === null || _a === void 0 ? void 0 : _a.reports) || 0;
+        dbObj[reportedUserId].reports = currentReports + 1;
+        dbObj[reportedUserId].reportReason = reason; // Keep for backward compatibility
+        dbObj[reportedUserId].reportingPartner = reportedByUserId;
+        fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
+    });
+}
+// Get all reports grouped by user (for admin view - scalable)
+function getGroupedReports() {
+    return __awaiter(this, arguments, void 0, function* (limit = 10) {
+        if (useMongoDB && !isFallbackMode) {
+            try {
+                const collection = yield getReportsCollection();
+                const pipeline = [
+                    { $sort: { createdAt: -1 } },
+                    {
+                        $group: {
+                            _id: "$reportedUser",
+                            count: { $sum: 1 },
+                            latestReason: { $first: "$reason" },
+                            reporters: { $push: "$reportedBy" }
+                        }
+                    },
+                    { $sort: { count: -1 } },
+                    { $limit: limit },
+                    {
+                        $project: {
+                            userId: "$_id",
+                            count: 1,
+                            latestReason: 1,
+                            reporters: 1
+                        }
+                    }
+                ];
+                const results = yield collection.aggregate(pipeline).toArray();
+                return results.map(r => ({
+                    userId: r.userId,
+                    count: r.count,
+                    latestReason: r.latestReason,
+                    reporters: r.reporters || []
+                }));
+            }
+            catch (error) {
+                console.error("[ERROR] - MongoDB getGroupedReports error:", error);
+            }
+        }
+        // Fallback: iterate through users (less efficient but works)
+        const allUsers = yield getAllUsers();
+        const userReports = [];
+        for (const id of allUsers) {
+            const userId = parseInt(id);
+            const reports = yield getReportCount(userId);
+            if (reports > 0) {
+                const user = yield getUser(userId);
+                userReports.push({
+                    userId,
+                    count: reports,
+                    latestReason: user.reportReason || "No reason",
+                    reporters: []
+                });
+            }
+        }
+        // Sort by count descending and limit
+        userReports.sort((a, b) => b.count - a.count);
+        return userReports.slice(0, limit);
+    });
+}
+// Get full report history for a specific user
+function getUserReports(userId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (useMongoDB && !isFallbackMode) {
+            try {
+                const collection = yield getReportsCollection();
+                const reports = yield collection
+                    .find({ reportedUser: userId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                return reports;
+            }
+            catch (error) {
+                console.error("[ERROR] - MongoDB getUserReports error:", error);
+            }
+        }
+        // Fallback: read from user data
+        const user = yield getUser(userId);
+        const history = user.reportHistory || [];
+        return history.map((r) => ({
+            reportedUser: userId,
+            reportedBy: r.reportedBy,
+            reason: r.reason,
+            createdAt: r.createdAt
+        }));
+    });
+}
+// Atomically increment user's report count to prevent race conditions
+function incrementReportCount(userId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (useMongoDB && !isFallbackMode) {
+            try {
+                const collection = yield getUsersCollection();
+                yield collection.updateOne({ telegramId: userId }, { $inc: { reports: 1 } });
+                const user = yield getUser(userId);
+                return user.reports || 0;
+            }
+            catch (error) {
+                console.error("[ERROR] - MongoDB incrementReportCount error:", error);
+            }
+        }
+        // JSON/file fallback with read-modify-write
+        const fs = require("fs");
+        const dbObj = JSON.parse(fs.readFileSync(JSON_FILE, "utf8"));
+        const currentReports = ((_a = dbObj[userId]) === null || _a === void 0 ? void 0 : _a.reports) || 0;
+        dbObj[userId] = Object.assign(Object.assign({}, (dbObj[userId] || {})), { reports: currentReports + 1 });
+        fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
+        return currentReports + 1;
     });
 }
 function getBanReason(id) {

@@ -1,7 +1,7 @@
 import { Context, NarrowedContext } from "telegraf";
 import { Event } from "../Utils/eventHandler";
 import { ExtraTelegraf } from "..";
-import { Message, Update } from "telegraf/types";
+import { Message, Update, ChatAction } from "telegraf/types";
 import { updateUser, getUser, getAllUsers, deleteUser, isBanned, getReportCount, getReferralCount } from "../storage/db";
 import { isBotBlockedError, cleanupBlockedUser, isNotEnoughRightsError, isRateLimitError, getRetryDelay, broadcastWithRateLimit } from "../Utils/telegramErrorHandler";
 import { waitingForBroadcast, waitingForUserId } from "../Commands/adminaccess";
@@ -29,9 +29,21 @@ const cancelKeyboard = Markup.inlineKeyboard([
 ]);
 
 const mainMenuKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🔍 Search", "START_SEARCH")],
+    [Markup.button.callback("🔍 Find Partner", "START_SEARCH")],
     [Markup.button.callback("⚙️ Settings", "OPEN_SETTINGS")],
+    [Markup.button.callback("🎁 Referrals", "OPEN_REFERRAL")],
     [Markup.button.callback("❓ Help", "START_HELP")]
+]);
+
+// Chat active keyboard - shown during conversation
+const chatActiveKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("🚪 Leave", "END_CHAT")],
+    [Markup.button.callback("🚨 Report", "OPEN_REPORT")]
+]);
+
+// Waiting keyboard - shown while searching
+const waitingKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("🔄 Cancel", "CANCEL_SEARCH")]
 ]);
 
 export default {
@@ -78,16 +90,12 @@ export default {
 
         console.log(`[BROADCAST] - Completed: Sent ${success}, Failed ${failed}`);
         
-        // Delete users who failed to receive broadcast (blocked or deactivated)
-        let deletedCount = 0;
-        for (const userId of failedUserIds) {
-            await deleteUser(userId, "Broadcast failed - blocked or deactivated");
-            deletedCount++;
-        }
+        // Note: We no longer delete users who failed to receive broadcast
+        // Users remain in the system even if they blocked the bot or are deactivated
         
         // Clear any inline keyboards by using removeKeyboard
         return ctx.reply(
-            `📢 *Broadcast Result*\n\n✅ Sent: ${success}\n❌ Failed: ${failed}\n🗑️ Deleted: ${deletedCount}\n\nTotal Users: ${users.length}`,
+            `📢 *Broadcast Result*\n\n✅ Sent: ${success}\n❌ Failed: ${failed}\n\nTotal Users: ${users.length}`,
             { parse_mode: "Markdown", ...Markup.removeKeyboard() }
         );
     }
@@ -162,7 +170,8 @@ export default {
       // Check if user is in waiting queue
       if (bot.waiting === ctx.from.id) {
         return ctx.reply(
-          "⏳ Waiting for a partner...\n\nUse /end to stop searching."
+          "⏳ Waiting for a partner...",
+          waitingKeyboard
         );
       }
 
@@ -286,12 +295,39 @@ export default {
       return; // Partner not found
     }
 
+    // Helper function to get chat action based on message type
+    const getChatAction = (): ChatAction => {
+      if ("photo" in ctx.message) return "upload_photo" as ChatAction;
+      if ("video" in ctx.message) return "upload_video" as ChatAction;
+      if ("audio" in ctx.message) return "upload_audio" as ChatAction;
+      if ("voice" in ctx.message) return "upload_voice" as ChatAction;
+      if ("document" in ctx.message) return "upload_document" as ChatAction;
+      if ("sticker" in ctx.message) return "choose_sticker" as ChatAction;
+      if ("video_note" in ctx.message) return "upload_video_note" as ChatAction;
+      return "typing" as ChatAction; // Default for text messages
+    };
+
+    // Send typing indicator to partner before forwarding
+    const sendTypingIndicator = async () => {
+      try {
+        await ctx.telegram.sendChatAction(partner, getChatAction());
+        // Add delay to simulate natural typing
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } catch (error) {
+        // Partner might have left, ignore typing indicator errors
+        console.log(`[CHAT] - Could not send typing indicator to ${partner}`);
+      }
+    };
+
     try {
       let sent;
 
       if ("reply_to_message" in ctx.message) {
         const messageId = ctx.message.reply_to_message?.message_id;
         const messageMap = bot.messageMap.get(partner);
+
+        // Send typing indicator before forwarding
+        await sendTypingIndicator();
 
         if (messageMap && messageId) {
           const replyMessageId = messageMap[messageId];
@@ -306,6 +342,8 @@ export default {
           sent = await ctx.copyMessage(partner);
         }
       } else {
+        // Send typing indicator before forwarding regular message
+        await sendTypingIndicator();
         sent = await ctx.copyMessage(partner);
       }
 
@@ -416,6 +454,8 @@ export default {
         
         // Retry the message send once
         try {
+          // Send typing indicator before retry
+          await sendTypingIndicator();
           await ctx.copyMessage(partner);
           return;
         } catch (retryError: any) {

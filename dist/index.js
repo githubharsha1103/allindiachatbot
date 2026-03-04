@@ -321,35 +321,10 @@ if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
     const domain = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
     const webhookUrl = `${domain}${WEBHOOK_PATH}`;
     console.log(`[INFO] - Setting webhook to: ${webhookUrl}`);
-    // Set webhook
-    exports.bot.telegram.setWebhook(webhookUrl).then(() => {
-        console.log("[INFO] - Webhook set successfully");
-    }).catch((err) => {
-        console.error("[ERROR] - Failed to set webhook:", err.message);
-    });
     // Start HTTP server for webhooks
     const app = (0, express_1.default)();
-    // Use express.json() middleware for parsing Telegram updates
-    app.use(express_1.default.json());
-    // Webhook endpoint
-    app.post(WEBHOOK_PATH, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a, _b, _c, _d;
-        // Log that we received an update
-        const updateType = req.body.callback_query ? "callback_query" : req.body.message ? "message" : req.body.inline_query ? "inline_query" : "other";
-        console.log("[WEBHOOK] - Received update:", updateType, "from user:", ((_b = (_a = req.body.callback_query) === null || _a === void 0 ? void 0 : _a.from) === null || _b === void 0 ? void 0 : _b.id) || ((_d = (_c = req.body.message) === null || _c === void 0 ? void 0 : _c.from) === null || _d === void 0 ? void 0 : _d.id));
-        try {
-            // Handle Telegram update and wait for it to complete
-            yield exports.bot.handleUpdate(req.body);
-            console.log("[WEBHOOK] - Update processed successfully");
-            res.sendStatus(200);
-        }
-        catch (err) {
-            // Log but don't crash on network errors to Telegram API
-            const errMsg = (err === null || err === void 0 ? void 0 : err.message) || 'Unknown error';
-            console.error("[ERROR] - Failed to handle update:", errMsg, err);
-            res.sendStatus(200); // Always return 200 to Telegram to prevent retries
-        }
-    }));
+    // Use Telegraf's built-in webhook callback (handles parsing correctly)
+    app.use(exports.bot.webhookCallback(WEBHOOK_PATH));
     // Health check endpoint - simplified version that doesn't make API calls
     app.get("/health", (req, res) => {
         res.json({
@@ -370,10 +345,18 @@ if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL) {
         res.status(200).send("OK");
     });
     // Start the server
-    const server = app.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", () => __awaiter(void 0, void 0, void 0, function* () {
         console.log(`[INFO] - Server listening on port ${PORT}`);
         console.log(`[INFO] - Health check endpoints active`);
-    });
+        // Set webhook AFTER server is listening
+        try {
+            yield exports.bot.telegram.setWebhook(webhookUrl);
+            console.log("[INFO] - Webhook set successfully");
+        }
+        catch (err) {
+            console.error("[ERROR] - Failed to set webhook:", err.message);
+        }
+    }));
 }
 else {
     // For local development, use long polling

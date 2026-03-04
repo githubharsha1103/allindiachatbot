@@ -552,6 +552,7 @@ for (const [action, reason] of Object.entries(reportReasonsMap)) {
 }
 // Confirm report
 index_1.bot.action("REPORT_CONFIRM", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     // Check cooldown to prevent report abuse
     if (checkAndApplyCooldown(ctx, "REPORT_CONFIRM")) {
         yield safeAnswerCbQuery(ctx, "Please wait...");
@@ -566,19 +567,47 @@ index_1.bot.action("REPORT_CONFIRM", (ctx) => __awaiter(void 0, void 0, void 0, 
     if (!partnerId || !reportReason) {
         return safeEditMessageText(ctx, "Report cancelled.", backKeyboard);
     }
+    // Check if user has already reported this partner
+    if ((_a = user.reportedUsers) === null || _a === void 0 ? void 0 : _a.includes(partnerId)) {
+        return safeEditMessageText(ctx, "⚠️ You have already reported this user.", backKeyboard);
+    }
+    // Atomically increment report count to prevent race conditions
+    const newReportCount = yield (0, db_1.incrementReportCount)(partnerId);
+    // Track that this user has reported this partner
+    yield (0, db_1.updateUser)(ctx.from.id, {
+        reportedUsers: [...(user.reportedUsers || []), partnerId]
+    });
     // Notify the reporter
     yield safeEditMessageText(ctx, "Thank you for reporting! 🙏", backKeyboard);
-    // Send report to all admins
+    // Notify admins on every report
     const adminIds = ADMINS.map(id => parseInt(id));
     for (const adminId of adminIds) {
         try {
-            yield ctx.telegram.sendMessage(adminId, `🚨 *Report Submitted*\n\n` +
-                `📋 *Reason:* ${reportReason}\n` +
-                `👤 *Reported User ID:* ${partnerId}\n` +
-                `👤 *Reported by:* ${ctx.from.id}\n\n` +
-                `Please review this report.`, { parse_mode: "Markdown" });
+            yield ctx.telegram.sendMessage(adminId, `🚨 *User Reported*\n\n` +
+                `👤 Reported User: ${partnerId}\n` +
+                `📊 Total Reports: ${newReportCount}\n` +
+                `📝 Reason: ${reportReason}\n` +
+                `🙋 Reported By: ${ctx.from.id}`, {
+                parse_mode: "Markdown",
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            {
+                                text: "🚫 Ban User",
+                                callback_data: `ADMIN_QUICK_BAN_${partnerId}`
+                            }
+                        ],
+                        [
+                            {
+                                text: "❌ Ignore",
+                                callback_data: "ADMIN_IGNORE_REPORT"
+                            }
+                        ]
+                    ]
+                }
+            });
         }
-        catch (_a) {
+        catch (_b) {
             // Admin might not exist, ignore
         }
     }
@@ -593,6 +622,57 @@ index_1.bot.action("REPORT_CANCEL", (ctx) => __awaiter(void 0, void 0, void 0, f
     // Clear report data
     yield (0, db_1.updateUser)(ctx.from.id, { reportingPartner: null, reportReason: null });
     return safeEditMessageText(ctx, "Report cancelled.", backKeyboard);
+}));
+// Quick ban from report notification
+index_1.bot.action(/ADMIN_QUICK_BAN_(\d+)/, (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Safety check for ctx.match
+    if (!ctx.match)
+        return;
+    // Verify admin authorization
+    if (!ctx.from || !isAdmin(ctx.from.id)) {
+        yield ctx.answerCbQuery("Unauthorized");
+        return;
+    }
+    yield ctx.answerCbQuery("User banned ✅");
+    const userId = parseInt(ctx.match[1]);
+    try {
+        // Check if user is already banned
+        const alreadyBanned = yield (0, db_1.isBanned)(userId);
+        if (alreadyBanned) {
+            yield ctx.editMessageText(`⚠️ *User Already Banned*\n\nUser ID: ${userId} is already banned.`, { parse_mode: "Markdown" });
+            return;
+        }
+        // Add to bans collection
+        yield (0, db_1.banUser)(userId);
+        // Update user's banned field and ban reason
+        yield (0, db_1.updateUser)(userId, {
+            banned: true,
+            banReason: "Banned by admin via report notification"
+        });
+        yield ctx.editMessageText(`🚫 *User Banned Successfully*\n\nUser ID: ${userId} has been banned.`, { parse_mode: "Markdown" });
+        // Optionally notify banned user
+        try {
+            yield ctx.telegram.sendMessage(userId, `🚫 *You Have Been Banned*\n\n` +
+                `You were banned due to a report violation.`, { parse_mode: "Markdown" });
+        }
+        catch (_a) {
+            // User may have blocked bot
+        }
+    }
+    catch (error) {
+        console.error("[ERROR] Quick ban failed:", error);
+        yield ctx.answerCbQuery("Ban failed. Try again.");
+    }
+}));
+// Ignore report
+index_1.bot.action("ADMIN_IGNORE_REPORT", (ctx) => __awaiter(void 0, void 0, void 0, function* () {
+    // Verify admin authorization
+    if (!ctx.from || !isAdmin(ctx.from.id)) {
+        yield ctx.answerCbQuery("Unauthorized");
+        return;
+    }
+    yield ctx.answerCbQuery("Ignored");
+    yield ctx.editMessageText("❌ Report ignored.");
 }));
 // Show improved setup complete message with summary
 function showSetupComplete(ctx) {

@@ -445,20 +445,46 @@ export async function getAllUsers(): Promise<string[]> {
 }
 
 export async function getReportCount(id: number): Promise<number> {
-  // First try new scalable report storage
+  let count = 0;
+  
+  // First try MongoDB
   if (useMongoDB && !isFallbackMode) {
     try {
       const collection = await getReportsCollection();
-      const count = await collection.countDocuments({ reportedUser: id });
-      return count;
+      count = await collection.countDocuments({ reportedUser: id });
+      if (count > 0) {
+        return count;
+      }
     } catch (error) {
       console.error("[ERROR] - MongoDB getReportCount error:", error);
     }
   }
   
-  // Fallback to legacy user field
-  const user = await getUser(id);
-  return user.reports || 0;
+  // Also check JSON fallback for reports
+  try {
+    const fs = require("fs");
+    if (fs.existsSync(JSON_FILE)) {
+      const dbObj = JSON.parse(fs.readFileSync(JSON_FILE, "utf8"));
+      const userData = dbObj[id];
+      
+      if (userData) {
+        // Check legacy reports field
+        const jsonCount = userData.reports || 0;
+        
+        // Also check reportHistory
+        let historyCount = 0;
+        if (userData.reportHistory && Array.isArray(userData.reportHistory)) {
+          historyCount = userData.reportHistory.length;
+        }
+        
+        return count + jsonCount + historyCount;
+      }
+    }
+  } catch (error) {
+    console.error("[ERROR] - Reading report count from JSON:", error);
+  }
+  
+  return count;
 }
 
 // ==================== REPORT SYSTEM (SCALABLE) ====================
@@ -530,6 +556,8 @@ export async function createReport(
 
 // Get all reports grouped by user (for admin view - scalable)
 export async function getGroupedReports(limit: number = 10): Promise<{ userId: number; count: number; latestReason: string; reporters: number[] }[]> {
+  let mongoResults: { userId: number; count: number; latestReason: string; reporters: number[] }[] = [];
+  
   if (useMongoDB && !isFallbackMode) {
     try {
       const collection = await getReportsCollection();
@@ -556,7 +584,7 @@ export async function getGroupedReports(limit: number = 10): Promise<{ userId: n
       ];
       
       const results = await collection.aggregate(pipeline).toArray();
-      return results.map(r => ({
+      mongoResults = results.map(r => ({
         userId: r.userId,
         count: r.count,
         latestReason: r.latestReason,
@@ -567,27 +595,113 @@ export async function getGroupedReports(limit: number = 10): Promise<{ userId: n
     }
   }
   
-  // Fallback: iterate through users (less efficient but works)
-  const allUsers = await getAllUsers();
-  const userReports: { userId: number; count: number; latestReason: string; reporters: number[] }[] = [];
+  // Also check JSON fallback for reports (in case MongoDB is empty or not available)
+  const jsonReports = await getReportsFromJson();
   
-  for (const id of allUsers) {
-    const userId = parseInt(id);
-    const reports = await getReportCount(userId);
-    if (reports > 0) {
-      const user = await getUser(userId);
-      userReports.push({
-        userId,
-        count: reports,
-        latestReason: user.reportReason || "No reason",
-        reporters: []
-      });
+  // Merge MongoDB and JSON results, avoiding duplicates
+  const mergedMap = new Map<number, { userId: number; count: number; latestReason: string; reporters: number[] }>();
+  
+  // Add MongoDB results first
+  for (const r of mongoResults) {
+    mergedMap.set(r.userId, r);
+  }
+  
+  // Merge JSON results (add counts if user already exists)
+  for (const r of jsonReports) {
+    if (mergedMap.has(r.userId)) {
+      // User exists in MongoDB, add the JSON count to MongoDB count
+      const existing = mergedMap.get(r.userId)!;
+      existing.count += r.count;
+      // Use JSON reason if MongoDB doesn't have one
+      if (!existing.latestReason && r.latestReason) {
+        existing.latestReason = r.latestReason;
+      }
+      // Merge reporters
+      for (const reporter of r.reporters) {
+        if (!existing.reporters.includes(reporter)) {
+          existing.reporters.push(reporter);
+        }
+      }
+    } else {
+      // User only in JSON, add them
+      mergedMap.set(r.userId, r);
     }
   }
   
-  // Sort by count descending and limit
-  userReports.sort((a, b) => b.count - a.count);
-  return userReports.slice(0, limit);
+  // Convert to array and sort
+  const combinedResults = Array.from(mergedMap.values());
+  combinedResults.sort((a, b) => b.count - a.count);
+  
+  return combinedResults.slice(0, limit);
+}
+
+// Helper function to get reports from JSON file
+async function getReportsFromJson(): Promise<{ userId: number; count: number; latestReason: string; reporters: number[] }[]> {
+  const userReports: { userId: number; count: number; latestReason: string; reporters: number[] }[] = [];
+  
+  try {
+    const fs = require("fs");
+    if (!fs.existsSync(JSON_FILE)) {
+      return userReports;
+    }
+    
+    const dbObj = JSON.parse(fs.readFileSync(JSON_FILE, "utf8"));
+    
+    for (const [idStr, userData] of Object.entries(dbObj)) {
+      const userId = parseInt(idStr);
+      const data = userData as any;
+      
+      // Check for legacy reports field
+      if (data.reports && data.reports > 0) {
+        userReports.push({
+          userId,
+          count: data.reports || 0,
+          latestReason: data.reportReason || "No reason",
+          reporters: data.reportingPartner ? [data.reportingPartner] : []
+        });
+      }
+      
+      // Also check for reportHistory (newer format)
+      if (data.reportHistory && Array.isArray(data.reportHistory)) {
+        // Check if we already added this user from legacy reports
+        const existingIndex = userReports.findIndex(r => r.userId === userId);
+        
+        if (existingIndex >= 0) {
+          // Add history reports to existing count
+          userReports[existingIndex].count += data.reportHistory.length;
+          // Get reporters from history
+          for (const report of data.reportHistory) {
+            if (report.reportedBy && !userReports[existingIndex].reporters.includes(report.reportedBy)) {
+              userReports[existingIndex].reporters.push(report.reportedBy);
+            }
+            // Use latest reason from history
+            if (report.reason) {
+              userReports[existingIndex].latestReason = report.reason;
+            }
+          }
+        } else {
+          // New entry from reportHistory
+          const reporters = data.reportHistory
+            .map((r: any) => r.reportedBy)
+            .filter((r: any) => r);
+          
+          // Get latest reason
+          const latestReport = data.reportHistory[data.reportHistory.length - 1];
+          
+          userReports.push({
+            userId,
+            count: data.reportHistory.length,
+            latestReason: latestReport?.reason || "No reason",
+            reporters
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[ERROR] - Reading reports from JSON:", error);
+  }
+  
+  return userReports;
 }
 
 // Get full report history for a specific user
@@ -986,43 +1100,34 @@ export async function getAllReferralStats(): Promise<{ totalReferrals: number; u
         try {
             const collection = await getUsersCollection();
             
-            // Single aggregation query to get both metrics
-            const result = await collection.aggregate([
-                {
-                    $match: { referralCount: { $gt: 0 } }
-                },
-                {
-                    $group: {
-                        _id: null,
-                        totalReferrals: { $sum: "$referralCount" },
-                        usersWithReferrals: { $sum: 1 }
-                    }
-                }
-            ]).toArray();
+            // Count users who have been referred (have a referredBy value)
+            const totalReferrals = await collection.countDocuments({ referredBy: { $exists: true, $ne: "" } });
             
-            if (result.length > 0) {
-                return {
-                    totalReferrals: result[0].totalReferrals || 0,
-                    usersWithReferrals: result[0].usersWithReferrals || 0
-                };
-            }
+            // Count users who have referred at least one person
+            const usersWithReferrals = await collection.countDocuments({ referralCount: { $gt: 0 } });
             
-            return { totalReferrals: 0, usersWithReferrals: 0 };
+            return {
+                totalReferrals,
+                usersWithReferrals
+            };
         } catch (error) {
             console.error("[ERROR] - MongoDB getAllReferralStats error:", error);
         }
     }
     
-    // JSON fallback - optimized (single pass through users)
+    // JSON fallback - count users with referredBy set
     const allUsers = await getAllUsers();
     let totalReferrals = 0;
     let usersWithReferrals = 0;
     
     for (const id of allUsers) {
         const user = await getUser(parseInt(id));
-        const referralCount = user?.referralCount || 0;
-        if (referralCount > 0) {
-            totalReferrals += referralCount;
+        // Count users who were referred (have referredBy)
+        if (user.referredBy) {
+            totalReferrals++;
+        }
+        // Count users who have referred someone
+        if ((user.referralCount || 0) > 0) {
             usersWithReferrals++;
         }
     }

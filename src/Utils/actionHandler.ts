@@ -2,7 +2,7 @@ import { glob } from "glob";
 import { bot } from "../index";
 import { Context, Telegraf } from "telegraf";
 import { Markup } from "telegraf";
-import { updateUser, getUser, getReferralCount, banUser, isBanned, incrementReportCount } from "../storage/db";
+import { updateUser, getUser, getReferralCount, banUser, isBanned, incrementReportCount, createReport } from "../storage/db";
 import { handleTelegramError } from "./telegramErrorHandler";
 
 // Because it doesn't know that ctx has a match property. by default, Context<Update> doesn't include match, but telegraf adds it dynamically when using regex triggers.
@@ -658,8 +658,8 @@ bot.action("REPORT_CONFIRM", async (ctx) => {
         return safeEditMessageText(ctx, "⚠️ You have already reported this user.", backKeyboard);
     }
     
-    // Atomically increment report count to prevent race conditions
-    const newReportCount = await incrementReportCount(partnerId);
+    // Create report in the reports collection (this also increments report count)
+    const newReportCount = await createReport(partnerId, ctx.from.id, reportReason);
     
     // Track that this user has reported this partner
     await updateUser(ctx.from.id, {
@@ -936,4 +936,132 @@ bot.action("RATE_MEDIUM", async (ctx) => {
     if (partnerId) {
         await updateUser(partnerId, { chatRating: 3 });
     }
+});
+
+// ==============================
+// NEW CHAT BUTTON HANDLERS
+// ==============================
+
+// End chat button - triggers /end command
+bot.action("END_CHAT", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "END_CHAT")) {
+        await safeAnswerCbQuery(ctx, "Please wait a moment...");
+        return;
+    }
+    await safeAnswerCbQuery(ctx);
+    // Trigger end command
+    const endCommand = require("../Commands/end").default;
+    await endCommand.execute(ctx, bot);
+});
+
+// Back to main menu button
+bot.action("BACK_MAIN_MENU", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "BACK_MAIN_MENU")) {
+        await safeAnswerCbQuery(ctx);
+        return;
+    }
+    await safeAnswerCbQuery(ctx);
+    
+    const mainMenuKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback("🔍 Find Partner", "START_SEARCH")],
+        [Markup.button.callback("⚙️ Settings", "OPEN_SETTINGS")],
+        [Markup.button.callback("🎁 Referrals", "OPEN_REFERRAL")],
+        [Markup.button.callback("❓ Help", "START_HELP")]
+    ]);
+    
+    await safeEditMessageText(
+        ctx,
+        "🌟 <b>Main Menu</b> 🌟\n\nThis bot helps you chat anonymously with people worldwide.\n\nUse the menu below to navigate:",
+        { parse_mode: "HTML", ...mainMenuKeyboard }
+    );
+});
+
+// Cancel search button
+bot.action("CANCEL_SEARCH", async (ctx) => {
+    // Check cooldown to prevent button spamming
+    if (checkAndApplyCooldown(ctx, "CANCEL_SEARCH")) {
+        await safeAnswerCbQuery(ctx, "Please wait...");
+        return;
+    }
+    await safeAnswerCbQuery(ctx);
+    
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    
+    // Remove from waiting queue
+    const botInstance = require("../index").bot;
+    const queueIndex = botInstance.waitingQueue.findIndex((w: any) => w.id === userId);
+    if (queueIndex !== -1) {
+        botInstance.waitingQueue.splice(queueIndex, 1);
+    }
+    
+    const mainMenuKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback("🔍 Find Partner", "START_SEARCH")],
+        [Markup.button.callback("⚙️ Settings", "OPEN_SETTINGS")],
+        [Markup.button.callback("🎁 Referrals", "OPEN_REFERRAL")],
+        [Markup.button.callback("❓ Help", "START_HELP")]
+    ]);
+    
+    await safeEditMessageText(
+        ctx,
+        "🔍 <b>Search Cancelled</b>\n\nYou have been removed from the waiting queue.",
+        { parse_mode: "HTML", ...mainMenuKeyboard }
+    );
+});
+
+// Rate chat as Okay (RATE_OKAY)
+bot.action("RATE_OKAY", async (ctx) => {
+    await safeAnswerCbQuery(ctx, "Thanks for your feedback!");
+    if (!ctx.from) return;
+    
+    const user = await getUser(ctx.from.id);
+    
+    const text =
+        `📝 <b>Thanks for your feedback!</b>\n\n` +
+        `We appreciate your input.\n\n` +
+        `Your feedback helps us make the community better.`;
+    
+    const ratingThankYouKeyboard = Markup.inlineKeyboard([
+        [Markup.button.callback("🔍 Find New Partner", "START_SEARCH")],
+        [Markup.button.callback("🚨 Report User", "OPEN_REPORT")],
+        [Markup.button.callback("🔙 Main Menu", "BACK_MAIN_MENU")]
+    ]);
+    
+    await safeEditMessageText(ctx, text, { parse_mode: "HTML", ...ratingThankYouKeyboard });
+    
+    const partnerId = user.lastPartner;
+    if (partnerId) {
+        await updateUser(partnerId, { chatRating: 3 });
+    }
+});
+
+// Age selection buttons for settings
+bot.action("AGE_13_17", async (ctx) => {
+    if (!ctx.from) return;
+    await safeAnswerCbQuery(ctx);
+    await updateUser(ctx.from.id, { age: "13-17" });
+    await showSettings(ctx);
+});
+
+bot.action("AGE_18_25", async (ctx) => {
+    if (!ctx.from) return;
+    await safeAnswerCbQuery(ctx);
+    await updateUser(ctx.from.id, { age: "18-25" });
+    await showSettings(ctx);
+});
+
+bot.action("AGE_26_40", async (ctx) => {
+    if (!ctx.from) return;
+    await safeAnswerCbQuery(ctx);
+    await updateUser(ctx.from.id, { age: "26-40" });
+    await showSettings(ctx);
+});
+
+bot.action("AGE_40_PLUS", async (ctx) => {
+    if (!ctx.from) return;
+    await safeAnswerCbQuery(ctx);
+    await updateUser(ctx.from.id, { age: "40+" });
+    await showSettings(ctx);
 });
