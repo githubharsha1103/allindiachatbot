@@ -318,6 +318,14 @@ export default {
         console.log(`[CHAT] - Could not send typing indicator to ${partner}`);
       }
     };
+    
+    // Timeout wrapper for Telegram API calls (15 seconds max)
+    const withTimeout = async <T>(promise: Promise<T>, ms: number = 15000): Promise<T> => {
+      const timeout = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error("Telegram API timeout")), ms)
+      );
+      return Promise.race([promise, timeout]) as Promise<T>;
+    };
 
     try {
       let sent;
@@ -328,23 +336,34 @@ export default {
 
         // Send typing indicator before forwarding
         await sendTypingIndicator();
-
-        if (messageMap && messageId) {
-          const replyMessageId = messageMap[messageId];
-          if (replyMessageId) {
-            sent = await ctx.copyMessage(partner, {
-              reply_parameters: { message_id: replyMessageId }
-            });
+        
+        try {
+          if (messageMap && messageId) {
+            const replyMessageId = messageMap[messageId];
+            if (replyMessageId) {
+              sent = await withTimeout(ctx.copyMessage(partner, {
+                reply_parameters: { message_id: replyMessageId }
+              }));
+            } else {
+              sent = await withTimeout(ctx.copyMessage(partner));
+            }
           } else {
-            sent = await ctx.copyMessage(partner);
+            sent = await withTimeout(ctx.copyMessage(partner));
           }
-        } else {
-          sent = await ctx.copyMessage(partner);
+        } catch (error: any) {
+          console.error("[CHAT] - Message forwarding failed:", error?.message || error);
+          return; // Exit gracefully on timeout
         }
       } else {
         // Send typing indicator before forwarding regular message
         await sendTypingIndicator();
-        sent = await ctx.copyMessage(partner);
+        
+        try {
+          sent = await withTimeout(ctx.copyMessage(partner));
+        } catch (error: any) {
+          console.error("[CHAT] - Message forwarding failed:", error?.message || error);
+          return; // Exit gracefully on timeout
+        }
       }
 
       if (sent) {
@@ -456,7 +475,7 @@ export default {
         try {
           // Send typing indicator before retry
           await sendTypingIndicator();
-          await ctx.copyMessage(partner);
+          await withTimeout(ctx.copyMessage(partner));
           return;
         } catch (retryError: any) {
           // If retry also fails, check if it's a block/not enough rights error

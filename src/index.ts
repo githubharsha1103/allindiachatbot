@@ -192,9 +192,16 @@ export class ExtraTelegraf extends Telegraf<Context> {
 
 export const bot = new ExtraTelegraf(process.env.BOT_TOKEN!);
 
-// Global catch handler for callback query errors
-bot.catch((err, ctx) => {
-    console.error("[Global bot error]:", err);
+// Global catch handler for callback query errors and timeouts
+bot.catch((err: any, ctx) => {
+    const errorMessage = err?.message || String(err);
+    
+    // Check if it's a timeout error
+    if (errorMessage.includes("timeout") || errorMessage.includes("Timeout")) {
+        console.error("[Global bot error] - TimeoutError:", errorMessage);
+    } else {
+        console.error("[Global bot error]:", err);
+    }
     
     // Always try to answer callback query to prevent UI freeze
     if (ctx.callbackQuery) {
