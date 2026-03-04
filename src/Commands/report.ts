@@ -28,7 +28,7 @@ export default {
         let message = "Select a reason to report:";
 
         // If user is in a chat, report current partner
-        if (bot.runningChats.includes(ctx.from.id)) {
+        if (bot.runningChats.has(ctx.from.id)) {
             partnerId = bot.getPartner(ctx.from.id);
             message = `Report your current chat partner:\n\nSelect a reason:`;
         }

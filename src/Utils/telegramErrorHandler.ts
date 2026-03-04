@@ -82,16 +82,14 @@ export function cleanupBlockedUser(bot: ExtraTelegraf, userId: number): void {
     cleanedUp = true;
   }
 
-  // Remove from running chats
-  const chatIndex = bot.runningChats.indexOf(userId);
-  if (chatIndex !== -1) {
+  // Remove from running chats using Map
+  if (bot.runningChats.has(userId)) {
     // Get partner before removing
     const partner = bot.getPartner(userId);
     
-    // Remove both users from running chats (pair is broken) - filter once for efficiency
-    const usersToRemove = [userId];
-    if (partner) usersToRemove.push(partner);
-    bot.runningChats = bot.runningChats.filter(u => !usersToRemove.includes(u));
+    // Remove both users from running chats using Map delete
+    bot.runningChats.delete(userId);
+    if (partner) bot.runningChats.delete(partner);
     
     cleanedUp = true;
     console.log(`[CLEANUP] - User ${userId} removed from running chats (partner: ${partner})`);
@@ -144,8 +142,9 @@ export async function cleanupBlockedUserAsync(bot: ExtraTelegraf, userId: number
  * End a chat properly when an error occurs with the partner
  */
 export function endChatDueToError(bot: ExtraTelegraf, userId: number, partnerId: number): void {
-  // Remove both users from running chats
-  bot.runningChats = bot.runningChats.filter(u => u !== userId && u !== partnerId);
+  // Remove both users from running chats using Map delete
+  bot.runningChats.delete(userId);
+  bot.runningChats.delete(partnerId);
   
   // Clean up message maps
   bot.messageMap.delete(userId);

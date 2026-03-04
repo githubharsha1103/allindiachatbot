@@ -48,7 +48,9 @@ class Mutex {
 export class ExtraTelegraf extends Telegraf<Context> {
   waiting: number | null = null;
   waitingQueue: { id: number; preference: string; gender: string; isPremium: boolean }[] = [];
-  runningChats: number[] = [];
+  
+  // Running chats: Map<userId, partnerId> - much more efficient than array
+  runningChats: Map<number, number> = new Map();
 
   // Message mapping for replies
   messageMap: Map<number, { [key: number]: number }> = new Map();
@@ -122,25 +124,24 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   getPartner(id: number): number | null {
-    const index = this.runningChats.indexOf(id);
-    if (index === -1) return null; // User not in any chat
-    
-    // Validate that we have an even-indexed user (users should be stored in pairs)
-    // Even index (0, 2, 4...) - partner is at index + 1
-    if (index % 2 === 0) {
-      // Check if partner exists at index + 1
-      if (index + 1 < this.runningChats.length) {
-        return this.runningChats[index + 1];
-      }
-      return null; // No partner found
+    // O(1) lookup using Map - much faster than array indexOf
+    return this.runningChats.get(id) || null;
+  }
+
+  // Add a user to running chats
+  addToChat(userId: number, partnerId: number): void {
+    this.runningChats.set(userId, partnerId);
+    this.runningChats.set(partnerId, userId);
+  }
+
+  // Remove a user from running chats (and their partner)
+  removeFromChat(userId: number): number | null {
+    const partnerId = this.runningChats.get(userId) || null;
+    if (partnerId) {
+      this.runningChats.delete(userId);
+      this.runningChats.delete(partnerId);
     }
-    
-    // Odd index (1, 3, 5...) - partner is at index - 1
-    if (index - 1 >= 0) {
-      return this.runningChats[index - 1];
-    }
-    
-    return null; // No partner found
+    return partnerId;
   }
 
   incrementChatCount() {
@@ -319,7 +320,7 @@ bot.command("broadcast", async (ctx) => {
 
 bot.command("active", (ctx) => {
   if (!isAdmin(ctx.from.id)) return;
-  ctx.reply(`Active chats: ${bot.runningChats.length / 2}`);
+  ctx.reply(`Active chats: ${bot.runningChats.size / 2}`);
 });
 
 /* ---------------- ADMIN STATS ---------------- */
@@ -335,7 +336,7 @@ bot.command("stats", async (ctx) => {
 
 👥 <b>Total Users:</b> ${allUsers.length}
 💬 <b>Total Chats:</b> ${totalChats}
-💭 <b>Active Chats:</b> ${bot.runningChats.length / 2}
+💭 <b>Active Chats:</b> ${bot.runningChats.size / 2}
 ⏳ <b>Users Waiting:</b> ${bot.waitingQueue.length}
 `;
   
@@ -446,7 +447,7 @@ function cleanupStaleData() {
     }
     
     // Log cleanup stats
-    console.log(`[CLEANUP] - Rate limit map size: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.length}, Waiting queue: ${bot.waitingQueue.length}`);
+    console.log(`[CLEANUP] - Rate limit map size: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length}`);
   } catch (error) {
     console.error("[CLEANUP] - Error during cleanup:", error);
   }

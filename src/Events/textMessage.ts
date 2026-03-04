@@ -166,7 +166,7 @@ export default {
         Only process profile inputs if user is NOT in a chat
       ================================= */
 
-    if (!bot.runningChats.includes(ctx.from.id)) {
+    if (!bot.runningChats.has(ctx.from.id)) {
       // Check if user is in waiting queue
       if (bot.waiting === ctx.from.id) {
         return ctx.reply(
@@ -417,11 +417,8 @@ export default {
       if (isBotBlockedError(error)) {
         console.log(`[CHAT] - Partner ${partner} blocked the bot, ending chat`);
         
-        // Clean up the chat state
+        // Clean up the chat state (cleanupBlockedUser handles runningChats deletion)
         cleanupBlockedUser(bot, partner);
-        
-        // Also remove current user from running chats
-        bot.runningChats = bot.runningChats.filter(u => u !== ctx.from.id);
         
         // Clean up message maps
         bot.messageMap.delete(ctx.from.id);
@@ -442,11 +439,8 @@ export default {
       if (isNotEnoughRightsError(error)) {
         console.log(`[CHAT] - Partner ${partner} restricted bot, ending chat`);
         
-        // Clean up the chat state
+        // Clean up the chat state (cleanupBlockedUser handles runningChats deletion)
         cleanupBlockedUser(bot, partner);
-        
-        // Also remove current user from running chats
-        bot.runningChats = bot.runningChats.filter(u => u !== ctx.from.id);
         
         // Clean up message maps
         bot.messageMap.delete(ctx.from.id);
@@ -481,7 +475,8 @@ export default {
           // If retry also fails, check if it's a block/not enough rights error
           if (isBotBlockedError(retryError) || isNotEnoughRightsError(retryError)) {
             cleanupBlockedUser(bot, partner);
-            bot.runningChats = bot.runningChats.filter(u => u !== ctx.from.id);
+            
+            // Clean up message maps
             bot.messageMap.delete(ctx.from.id);
             bot.messageMap.delete(partner);
             

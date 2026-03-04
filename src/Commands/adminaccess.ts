@@ -279,7 +279,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await safeAnswerCbQuery(ctx);
         
         const runningChats = bot.runningChats;
-        const activeChatsCount = runningChats.length / 2;
+        const activeChatsCount = runningChats.size / 2;
         
         if (activeChatsCount === 0) {
             await safeEditMessageText(ctx,
@@ -289,14 +289,17 @@ export function initAdminActions(bot: ExtraTelegraf) {
             return;
         }
         
-        // Build list of active chats
+        // Build list of active chats using Map iterator
         const chatButtons = [];
-        for (let i = 0; i < runningChats.length; i += 2) {
-            const user1 = runningChats[i];
-            const user2 = runningChats[i + 1];
-            chatButtons.push([
-                Markup.button.callback(`👥 Chat #${(i / 2) + 1}`, `ADMIN_SPECTATE_${user1}_${user2}`)
-            ]);
+        let chatIndex = 1;
+        for (const [user1, user2] of runningChats) {
+            // Only show each pair once (when user1 < user2 to avoid duplicates)
+            if (user1 < user2) {
+                chatButtons.push([
+                    Markup.button.callback(`👥 Chat #${chatIndex}`, `ADMIN_SPECTATE_${user1}_${user2}`)
+                ]);
+                chatIndex++;
+            }
         }
         
         const keyboard = Markup.inlineKeyboard([
@@ -385,8 +388,9 @@ export function initAdminActions(bot: ExtraTelegraf) {
         // Remove from spectating chats
         bot.spectatingChats.delete(adminId);
         
-        // Clean up chat state for both users
-        bot.runningChats = bot.runningChats.filter(u => u !== user1 && u !== user2);
+        // Clean up chat state for both users using Map delete
+        bot.runningChats.delete(user1);
+        bot.runningChats.delete(user2);
         bot.messageMap.delete(user1);
         bot.messageMap.delete(user2);
         bot.messageCountMap.delete(user1);
@@ -696,14 +700,13 @@ export function initAdminActions(bot: ExtraTelegraf) {
     async function terminateUserChat(ctx: any, botInstance: ExtraTelegraf, userId: number): Promise<number | null> {
         const runningChats = botInstance.runningChats;
         
-        // Check if user is in active chat
-        const userIndex = runningChats.indexOf(userId);
-        if (userIndex === -1) {
+        // Check if user is in active chat using Map.has()
+        if (!runningChats.has(userId)) {
             return null; // User is not in an active chat
         }
         
-        // Find partner (if user is at even index, partner is at odd index, and vice versa)
-        const partnerId = userIndex % 2 === 0 ? runningChats[userIndex + 1] : runningChats[userIndex - 1];
+        // Find partner using Map.get()
+        const partnerId = runningChats.get(userId);
         
         if (!partnerId) {
             return null;
@@ -711,8 +714,9 @@ export function initAdminActions(bot: ExtraTelegraf) {
         
         console.log(`[BAN] - Terminating chat between ${userId} and ${partnerId}`);
         
-        // Remove both users from runningChats
-        botInstance.runningChats = runningChats.filter(id => id !== userId && id !== partnerId);
+        // Remove both users from runningChats using Map delete
+        botInstance.runningChats.delete(userId);
+        botInstance.runningChats.delete(partnerId);
         
         // Clear message maps
         botInstance.messageMap.delete(userId);

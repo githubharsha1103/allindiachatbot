@@ -30,13 +30,12 @@ export default {
       const gender = await getGender(userId);
       
       // End current chat if in one
-      if (bot.runningChats.includes(userId)) {
+      if (bot.runningChats.has(userId)) {
         const partner = bot.getPartner(userId);
         
-        // Remove users from running chats (handle null partner)
-        const usersToRemove = [userId];
-        if (partner) usersToRemove.push(partner);
-        bot.runningChats = bot.runningChats.filter(u => !usersToRemove.includes(u));
+        // Remove users from running chats using Map delete
+        bot.runningChats.delete(userId);
+        if (partner) bot.runningChats.delete(partner);
         
         // Clean up message maps
         bot.messageMap.delete(userId);
@@ -125,7 +124,8 @@ export default {
         const matchUser = await getUser(match.id);
         bot.waitingQueue.splice(matchIndex, 1);
 
-        bot.runningChats.push(match.id, userId);
+        bot.runningChats.set(match.id, userId);
+        bot.runningChats.set(userId, match.id);
 
         // Store last partner and chat start time
         await updateUser(userId, { lastPartner: match.id, chatStartTime: Date.now() });
@@ -187,7 +187,7 @@ export default {
         // If message failed to send, check if partner is still in running chats
         if (!matchSent) {
           // Check if partner is still in running chats (they haven't left)
-          const partnerStillThere = bot.runningChats.includes(match.id);
+          const partnerStillThere = bot.runningChats.has(match.id);
           
           if (partnerStillThere) {
             // Partner is still there - maybe network issue, try to notify and let them continue waiting

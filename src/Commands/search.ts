@@ -125,7 +125,7 @@ export default {
       const preference = user.preference || "any";
       const isPremium = user.premium || false;
       
-      if (bot.runningChats.includes(userId)) {
+      if (bot.runningChats.has(userId)) {
         return ctx.reply(
           "You are already in a chat!\n\nUse /end to leave the chat or use /next to skip the current chat."
         );
@@ -172,7 +172,8 @@ export default {
         const matchUser = await getUser(match.id);
         bot.waitingQueue.splice(matchIndex, 1);
 
-        bot.runningChats.push(match.id, userId);
+        bot.runningChats.set(match.id, userId);
+        bot.runningChats.set(userId, match.id);
 
         // Store last partner for both users
         await updateUser(userId, { lastPartner: match.id });
@@ -241,7 +242,7 @@ export default {
         // They might have network issues, but we can try to reconnect
         if (!matchSent) {
           // Check if partner is still in running chats (they haven't left)
-          const partnerStillThere = bot.runningChats.includes(match.id);
+          const partnerStillThere = bot.runningChats.has(match.id);
           
           if (partnerStillThere) {
             // Partner is still there - maybe network issue, try to notify and let them continue waiting

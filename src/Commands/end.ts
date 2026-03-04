@@ -47,7 +47,7 @@ export default {
         await bot.chatMutex.acquire();
 
         try {
-            if (!bot.runningChats.includes(id)) {
+            if (!bot.runningChats.has(id)) {
                 return ctx.reply("You are not in a chat. Use /search to find a partner!");
             }
 
@@ -62,10 +62,9 @@ export default {
             // Get message count
             const messageCount = bot.messageCountMap.get(id) || 0;
 
-            // Clean up chat state
-            const usersToRemove = [id];
-            if (partner) usersToRemove.push(partner);
-            bot.runningChats = bot.runningChats.filter(u => !usersToRemove.includes(u));
+            // Clean up chat state using Map delete
+            bot.runningChats.delete(id);
+            if (partner) bot.runningChats.delete(partner);
 
             bot.messageMap.delete(id);
             if (partner) bot.messageMap.delete(partner);
