@@ -150,7 +150,37 @@ export function endChatDueToError(bot: ExtraTelegraf, userId: number, partnerId:
   bot.messageMap.delete(userId);
   bot.messageMap.delete(partnerId);
   
+  // Clean up message count maps
+  bot.messageCountMap.delete(userId);
+  bot.messageCountMap.delete(partnerId);
+  
   console.log(`[CLEANUP] - Chat ended due to error: user ${userId}, partner ${partnerId}`);
+}
+
+/**
+ * Clean up all tracking maps for a user and their partner
+ * Call this whenever a chat ends or a user disconnects
+ */
+export function cleanupUserMaps(bot: ExtraTelegraf, userId: number, partnerId: number | null): void {
+  // Clean up message maps for both users
+  bot.messageMap.delete(userId);
+  if (partnerId) {
+    bot.messageMap.delete(partnerId);
+  }
+
+  // Clean up message count maps for both users
+  bot.messageCountMap.delete(userId);
+  if (partnerId) {
+    bot.messageCountMap.delete(partnerId);
+  }
+
+  // Clean up rate limit entries for both users
+  bot.rateLimitMap.delete(userId);
+  if (partnerId) {
+    bot.rateLimitMap.delete(partnerId);
+  }
+
+  console.log(`[CLEANUP] - User maps cleaned: ${userId}, ${partnerId || 'none'}`);
 }
 
 /**
@@ -267,14 +297,15 @@ export async function safeSendMessage(
 }
 
 /**
- * Send message immediately (for critical messages) with retry logic
+ * Send message immediately (for critical messages) with retry logic and timeout
  */
 export async function sendMessageWithRetry(
   bot: ExtraTelegraf,
   chatId: number | null,
   text: string,
   extra?: any,
-  maxRetries: number = 5
+  maxRetries: number = 5,
+  timeoutMs: number = 15000
 ): Promise<boolean> {
   // Validate chatId before attempting to send
   if (!chatId || chatId === 0) {
@@ -286,7 +317,12 @@ export async function sendMessageWithRetry(
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      await bot.telegram.sendMessage(chatId, text, extra);
+      // Wrap with timeout using Promise.race
+      const promise = bot.telegram.sendMessage(chatId, text, extra);
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error("Telegram API timeout")), timeoutMs)
+      );
+      await Promise.race([promise, timeoutPromise]);
       return true;
     } catch (error: any) {
       lastError = error;
@@ -345,6 +381,7 @@ export async function sendMessageWithRetry(
 
 /**
  * Broadcast message to multiple users with rate limiting
+ * BLOCKING: Waits for all messages to be sent before returning
  */
 export async function broadcastWithRateLimit(
   bot: ExtraTelegraf,
@@ -356,55 +393,46 @@ export async function broadcastWithRateLimit(
     onProgress?: (success: number, failed: number) => void;
   }
 ): Promise<{ success: number; failed: number; failedUserIds: number[] }> {
-  // NON-BLOCKING: Send messages in background without waiting
-  // This prevents hosting platform timeouts (like Render free tier)
-  
   const failedUserIds: number[] = [];
+  let success = 0;
+  let failed = 0;
+  const SEND_DELAY = 35;
   
-  console.log(`[BROADCAST] - Starting NON-BLOCKING broadcast to ${userIds.length} users`);
-  console.log(`[BROADCAST] - Messages will be sent in background`);
+  console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users`);
   
-  // Start sending in background - DON'T await
-  (async () => {
-    let success = 0;
-    let failed = 0;
-    const SEND_DELAY = 35;
+  for (let i = 0; i < userIds.length; i++) {
+    const userId = userIds[i];
     
-    for (let i = 0; i < userIds.length; i++) {
-      const userId = userIds[i];
+    try {
+      await bot.telegram.sendMessage(userId, text, extra);
+      success++;
       
-      try {
-        await bot.telegram.sendMessage(userId, text, extra);
-        success++;
-        
-      } catch (error: any) {
-        // Check for 429 rate limit
-        if (error?.response?.error_code === 429) {
-          const retryAfter = error?.response?.parameters?.retry_after || 5;
-          console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s...`);
-          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-          i--; // Retry this user
-          continue;
-        }
-        
-        failed++;
-        failedUserIds.push(userId);
+    } catch (error: any) {
+      // Check for 429 rate limit
+      if (error?.response?.error_code === 429) {
+        const retryAfter = error?.response?.parameters?.retry_after || 5;
+        console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        i--; // Retry this user
+        continue;
       }
       
-      // Progress every 50
-      if ((i + 1) % 50 === 0) {
-        console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
-      }
-      
-      // Delay between messages
-      if (i < userIds.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
-      }
+      failed++;
+      failedUserIds.push(userId);
+      console.log(`[BROADCAST] - Failed to send to user ${userId}:`, error?.message || error);
     }
     
-    console.log(`[BROADCAST] - Complete! Sent: ${success}, Failed: ${failed}`);
-  })();
+    // Progress every 50
+    if ((i + 1) % 50 === 0) {
+      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
+    }
+    
+    // Delay between messages
+    if (i < userIds.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, SEND_DELAY));
+    }
+  }
   
-  // Return immediately - don't block
-  return { success: 0, failed: 0, failedUserIds: [] };
+  console.log(`[BROADCAST] - Complete! Sent: ${success}, Failed: ${failed}`);
+  return { success, failed, failedUserIds };
 }

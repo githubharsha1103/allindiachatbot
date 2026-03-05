@@ -6,6 +6,7 @@ import http from 'http';
 import { 
   setGender,
   getGender,
+  getUser,
   banUser,
   isBanned,
   getAllUsers,
@@ -13,7 +14,8 @@ import {
   closeDatabase,
   getTotalChats,
   incrementTotalChats,
-  deleteUser
+  deleteUser,
+  resetDailyCounts
 } from "./storage/db";
 import { isBotBlockedError, cleanupBlockedUser, broadcastWithRateLimit } from "./Utils/telegramErrorHandler";
 
@@ -77,6 +79,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   // Mutexes for race condition prevention
   chatMutex = new Mutex();
   queueMutex = new Mutex();
+  matchMutex = new Mutex(); // Dedicated mutex for matchmaking operations
 
   // Maximum queue size
   MAX_QUEUE_SIZE = 10000;
@@ -265,9 +268,16 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
-/* ---------------- GENDER COMMAND ---------------- */
+/* ---------------- GENDER COMMAND (Premium Only) ---------------- */
 
 bot.command("setgender", async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  
+  // Only allow premium users to change their gender
+  if (!user.premium) {
+    return ctx.reply("🔒 This feature is only available for Premium users.\n\nUpgrade to Premium to set your gender preference!");
+  }
+  
   const g = ctx.message.text.split(" ")[1]?.toLowerCase();
   if (!g || !["male", "female"].includes(g)) {
     return ctx.reply("Use: /setgender male OR /setgender female");
@@ -455,6 +465,102 @@ function cleanupStaleData() {
 
 // Run cleanup every 5 minutes
 setInterval(cleanupStaleData, 300000);
+
+/* ---------------- HOURLY RATE LIMIT MAP CLEANUP ---------------- */
+// Prevent memory growth in rate limit map by clearing it hourly
+setInterval(() => {
+  const sizeBefore = bot.rateLimitMap.size;
+  bot.rateLimitMap.clear();
+  console.log(`[CLEANUP] - Rate limit map cleared (was ${sizeBefore} entries)`);
+}, 3600000); // every hour
+
+/* ---------------- QUEUE SIZE PROTECTION ---------------- */
+// Ensure queue doesn't grow indefinitely - remove oldest entries if too large
+function enforceQueueSizeLimit(): void {
+  const MAX_QUEUE_SIZE = 10000;
+  
+  while (bot.waitingQueue.length > MAX_QUEUE_SIZE) {
+    bot.waitingQueue.shift(); // Remove oldest user
+  }
+  
+  if (bot.waitingQueue.length > MAX_QUEUE_SIZE * 0.8) {
+    console.log(`[WARN] - Queue size is at ${bot.waitingQueue.length}/${MAX_QUEUE_SIZE}`);
+  }
+}
+
+// Run queue size check every minute
+setInterval(enforceQueueSizeLimit, 60000);
+
+/* ---------------- QUEUE MATCHING SAFETY ---------------- */
+// Ensure users in active chats are not in the waiting queue
+function filterQueueUsersInChats(): void {
+  const initialLength = bot.waitingQueue.length;
+  
+  bot.waitingQueue = bot.waitingQueue.filter(user => {
+    // Remove users who are already in an active chat
+    return !bot.runningChats.has(user.id);
+  });
+  
+  const removed = initialLength - bot.waitingQueue.length;
+  if (removed > 0) {
+    console.log(`[CLEANUP] - Removed ${removed} users from queue who were in active chats`);
+  }
+  
+  // Also clear waiting if that user is in an active chat
+  if (bot.waiting && bot.runningChats.has(bot.waiting)) {
+    bot.waiting = null;
+  }
+}
+
+// Run queue safety filter every 30 seconds
+setInterval(filterQueueUsersInChats, 30000);
+
+/* ---------------- DAILY RESET ---------------- */
+// Reset daily chat counts at midnight
+function scheduleDailyReset() {
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  
+  const msUntilMidnight = tomorrow.getTime() - now.getTime();
+  
+  console.log(`[DAILY] - Daily reset scheduled in ${Math.round(msUntilMidnight / 1000 / 60)} minutes`);
+  
+  setTimeout(async () => {
+    try {
+      const count = await resetDailyCounts();
+      console.log(`[DAILY] - Daily chat counts reset for ${count} users`);
+    } catch (error) {
+      console.error("[DAILY] - Error resetting daily counts:", error);
+    }
+    
+    // Schedule next reset (every 24 hours)
+    setInterval(async () => {
+      try {
+        const count = await resetDailyCounts();
+        console.log(`[DAILY] - Daily chat counts reset for ${count} users`);
+      } catch (error) {
+        console.error("[DAILY] - Error resetting daily counts:", error);
+      }
+    }, 24 * 60 * 60 * 1000); // 24 hours
+  }, msUntilMidnight);
+}
+
+// Start the daily reset scheduler
+scheduleDailyReset();
+
+/* ---------------- BOT RESTART RECOVERY ---------------- */
+console.log("Bot restarted. Active chats cleared.");
+
+// Clear any stale data on startup
+bot.runningChats.clear();
+bot.waitingQueue = [];
+bot.waiting = null;
+bot.messageMap.clear();
+bot.messageCountMap.clear();
+
+console.log("[INFO] - Bot startup complete. All state cleared.");
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[UNHANDLED REJECTION] -", reason);

@@ -290,16 +290,23 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
         
         // Build list of active chats using Map iterator
+        // Use Set to avoid duplicate pairs reliably
         const chatButtons = [];
         let chatIndex = 1;
-        for (const [user1, user2] of runningChats) {
-            // Only show each pair once (when user1 < user2 to avoid duplicates)
-            if (user1 < user2) {
-                chatButtons.push([
-                    Markup.button.callback(`👥 Chat #${chatIndex}`, `ADMIN_SPECTATE_${user1}_${user2}`)
-                ]);
-                chatIndex++;
-            }
+        const visited = new Set<number>();
+        
+        for (const [user, partner] of runningChats) {
+            // Skip if we've already processed either user
+            if (visited.has(user) || visited.has(partner)) continue;
+            
+            visited.add(user);
+            visited.add(partner);
+            
+            // Valid chat pair - show button
+            chatButtons.push([
+                Markup.button.callback(`👥 Chat #${chatIndex}`, `ADMIN_SPECTATE_${user}_${partner}`)
+            ]);
+            chatIndex++;
         }
         
         const keyboard = Markup.inlineKeyboard([

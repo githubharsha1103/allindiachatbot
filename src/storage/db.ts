@@ -230,9 +230,24 @@ export async function updateUser(id: number, data: Partial<User>): Promise<void>
   fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
 }
 
-export async function incDaily(id: number): Promise<void> {
+export async function incDaily(id: number): Promise<boolean> {
   const user = await getUser(id);
-  await updateUser(id, { daily: (user.daily || 0) + 1 });
+  
+  // Skip if premium user has unlimited chats
+  if (user.premium) {
+    return true; // Premium users have unlimited daily chats
+  }
+  
+  const currentDaily = user.daily || 0;
+  const DAILY_LIMIT = 100;
+  
+  // Check if daily limit reached
+  if (currentDaily >= DAILY_LIMIT) {
+    return false; // Daily limit reached
+  }
+  
+  await updateUser(id, { daily: currentDaily + 1 });
+  return true;
 }
 
 export async function setGender(id: number, gender: string): Promise<void> {
@@ -866,6 +881,71 @@ export async function incrementTotalChats(): Promise<void> {
   }
   stats.totalChats = (stats.totalChats || 0) + 1;
   fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
+}
+
+// Reset daily chat count for all users (call at midnight)
+export async function resetDailyCounts(): Promise<number> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getUsersCollection();
+      const result = await collection.updateMany(
+        { premium: false },  // Only reset for non-premium users
+        { $set: { daily: 0 } }
+      );
+      console.log(`[DAILY] - Reset daily counts for ${result.modifiedCount} non-premium users`);
+      return result.modifiedCount;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB resetDailyCounts error:", error);
+    }
+  }
+  
+  // JSON fallback
+  const fs = require("fs");
+  if (!fs.existsSync(JSON_FILE)) return 0;
+  
+  const dbObj = JSON.parse(fs.readFileSync(JSON_FILE, "utf8"));
+  let count = 0;
+  
+  for (const id in dbObj) {
+    if (!dbObj[id].premium) {  // Only reset for non-premium users
+      dbObj[id].daily = 0;
+      count++;
+    }
+  }
+  
+  fs.writeFileSync(JSON_FILE, JSON.stringify(dbObj, null, 2));
+  console.log(`[DAILY] - Reset daily counts for ${count} non-premium users (JSON)`);
+  return count;
+}
+
+// Check and reset daily count if it's a new day
+export async function checkAndResetDaily(id: number): Promise<boolean> {
+  const user = await getUser(id);
+  
+  // Skip if premium user has unlimited chats
+  if (user.premium) {
+    return true;
+  }
+  
+  const now = Date.now();
+  const lastActive = user.lastActive || 0;
+  
+  // Reset if more than 24 hours since last activity
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  if (now - lastActive > ONE_DAY) {
+    await updateUser(id, { daily: 0 });
+    return true;
+  }
+  
+  const currentDaily = user.daily || 0;
+  const DAILY_LIMIT = 100;
+  
+  // Check if daily limit reached
+  if (currentDaily >= DAILY_LIMIT) {
+    return false;
+  }
+  
+  return true;
 }
 
 // Increment user's total chats count

@@ -1,6 +1,6 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { getGender, getUser, updateUser } from "../storage/db";
+import { getGender, getUser, updateUser, incDaily, checkAndResetDaily } from "../storage/db";
 import { sendMessageWithRetry, endChatDueToError, cleanupBlockedUser } from "../Utils/telegramErrorHandler";
 
 // Type for users in waiting queue
@@ -21,6 +21,18 @@ export default {
     // Check rate limit
     if (bot.isRateLimited(userId)) {
       return ctx.reply("⏳ Please wait a moment before trying again.");
+    }
+    
+    // Check queue size limit
+    if (bot.isQueueFull()) {
+      return ctx.reply("🚫 Queue is full. Please try again later.");
+    }
+    
+    // Enforce queue size limit by removing oldest if approaching limit
+    const MAX_QUEUE_SOFT_LIMIT = 9500; // Start removing at 95% capacity
+    while (bot.waitingQueue.length > MAX_QUEUE_SOFT_LIMIT) {
+      bot.waitingQueue.shift(); // Remove oldest user
+      console.log(`[QUEUE] - Queue size limit enforced, removed oldest user`);
     }
 
     // Acquire mutex to prevent race conditions
@@ -44,6 +56,10 @@ export default {
         // Clean up message count
         bot.messageCountMap.delete(userId);
         if (partner) bot.messageCountMap.delete(partner);
+        
+        // Clean up rate limit entries to prevent memory growth
+        bot.rateLimitMap.delete(userId);
+        if (partner) bot.rateLimitMap.delete(partner);
 
         // Store partner ID for potential report (both ways)
         if (partner) {
@@ -85,6 +101,18 @@ export default {
 
       // Get user preference
       const user = await getUser(userId);
+      
+      // Check daily chat limit for non-premium users (only when looking for a new match)
+      const canChat = await checkAndResetDaily(userId);
+      if (!canChat) {
+          return ctx.reply(
+              "⏰ *Daily chat limit reached!*\n\n" +
+              "You've used all 100 free chats for today.\n\n" +
+              "💎 *Upgrade to Premium for unlimited chats!*/settings",
+              { parse_mode: "Markdown" }
+          );
+      }
+      
       const preference = user.preference || "any";
       const isPremium = user.premium || false;
 
@@ -141,10 +169,14 @@ export default {
 
         // Increment chat count for new chat
         bot.incrementChatCount();
+        
+        // Increment daily chat count for non-premium user
+        await incDaily(userId);
 
         // Build partner info message - hide gender for non-premium users
-        const partnerGender = isPremium 
-            ? (matchUser.gender ? matchUser.gender.charAt(0).toUpperCase() + matchUser.gender.slice(1) : "Not Set")
+        // Premium users can see partner's gender only if partner has set it
+        const partnerGender = isPremium && matchUser.gender 
+            ? matchUser.gender.charAt(0).toUpperCase() + matchUser.gender.slice(1) 
             : "🔒 Hidden";
         const partnerAge = matchUser.age || "Not Set";
         
@@ -161,8 +193,9 @@ export default {
 /end — Leave the chat`;
 
         // For match user - also hide gender if they're not premium
-        const matchUserGender = user.premium 
-            ? (user.gender ? user.gender.charAt(0).toUpperCase() + user.gender.slice(1) : "Not Set")
+        // Premium users can see their own gender only if they have set it
+        const matchUserGender = user.premium && user.gender 
+            ? user.gender.charAt(0).toUpperCase() + user.gender.slice(1) 
             : "🔒 Hidden";
             
         const matchPartnerInfo = 

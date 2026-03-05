@@ -2,7 +2,7 @@ import { Context, NarrowedContext } from "telegraf";
 import { Event } from "../Utils/eventHandler";
 import { ExtraTelegraf } from "..";
 import { Message, Update, ChatAction } from "telegraf/types";
-import { updateUser, getUser, getAllUsers, deleteUser, isBanned, getReportCount, getReferralCount } from "../storage/db";
+import { updateUser, getUser, getAllUsers, deleteUser, isBanned, getReportCount, getReferralCount, updateLastActive } from "../storage/db";
 import { isBotBlockedError, cleanupBlockedUser, isNotEnoughRightsError, isRateLimitError, getRetryDelay, broadcastWithRateLimit } from "../Utils/telegramErrorHandler";
 import { waitingForBroadcast, waitingForUserId } from "../Commands/adminaccess";
 import { showUserDetails } from "../Commands/adminaccess";
@@ -55,6 +55,11 @@ export default {
 
     // SAFETY: ctx.from may be undefined
     if (!ctx.from) return;
+
+    // Update user's last active time
+    await updateLastActive(ctx.from.id).catch(err => 
+        console.error("[textMessage] - Error updating lastActive:", err)
+    );
 
     // Block polls
     if ("poll" in ctx.message) {
@@ -182,8 +187,9 @@ export default {
       if (text) {
         const txt = text.toLowerCase();
 
-        // ✅ Gender
-        if (txt === "male" || txt === "female") {
+        // ✅ Gender - Only allow premium users to change gender via text
+        const userForGender = await getUser(ctx.from.id);
+        if (userForGender.premium && (txt === "male" || txt === "female")) {
           await updateUser(ctx.from.id, { gender: txt });
           return ctx.reply("Gender updated ✅");
         }
@@ -217,13 +223,18 @@ export default {
         }
 
         // ✅ State (for setup phase - when user types state name)
-        if (txt === "telangana" || txt === "andhra pradesh" || txt === "karnataka" || 
-            txt === "tamil nadu" || txt === "maharashtra" || txt === "other") {
+        const validStates = ["telangana", "andhra pradesh", "karnataka", "tamil nadu", "maharashtra", "other"];
+        if (validStates.includes(txt)) {
           const user = await getUser(ctx.from.id);
           
           // Only process as setup if user is in setup phase
           if (user.setupStep === "state" || !user.state) {
-            await updateUser(ctx.from.id, { state: txt });
+            // Capitalize first letter of each word
+            const formattedState = txt.split(' ').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ');
+            
+            await updateUser(ctx.from.id, { state: formattedState });
             
             // Show setup complete message
             await ctx.reply(
@@ -398,14 +409,22 @@ export default {
         
         // Forward the message to the admin
         try {
-          await bot.telegram.sendMessage(
+          // Timeout wrapper for spectator messages
+          const withTimeout = async <T>(promise: Promise<T>, ms: number = 10000): Promise<T> => {
+            const timeout = new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error("Telegram API timeout")), ms)
+            );
+            return Promise.race([promise, timeout]) as Promise<T>;
+          };
+          
+          await withTimeout(bot.telegram.sendMessage(
             adminId,
             `<b>👁️ Spectator Update</b>\n\n${senderLabel} (<code>${senderId}</code>) sent a message:`,
             { parse_mode: "HTML" }
-          );
+          ));
           
           // Forward the actual message
-          await ctx.forwardMessage(adminId);
+          await withTimeout(ctx.forwardMessage(adminId));
         } catch (error) {
           // Admin might have exited spectator mode, remove from spectating chats
           console.log(`[SPECTATOR] - Admin ${adminId} no longer available, removing spectator`);

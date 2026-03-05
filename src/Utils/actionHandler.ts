@@ -79,8 +79,9 @@ const preferenceKeyboard = Markup.inlineKeyboard([
 
 const premiumMessage = 
 "⭐ *Premium Feature*\n\n" +
-"Gender preference is available only for Premium users.\n\n" +
-"To unlock this feature, please contact the admin @demonhunter1511 to purchase Premium access.";
+"This feature is available only for Premium users.\n\n" +
+"📞 Contact admin @demonhunter1511 to purchase Premium\n" +
+"🎁 Or use /settings → Referrals to earn free Premium!";
 
 
 const mainMenuKeyboard = Markup.inlineKeyboard([
@@ -169,10 +170,13 @@ async function showSettings(ctx: ActionContext) {
     const u = await getUser(ctx.from.id);
     const referralCount = await getReferralCount(ctx.from.id);
 
+    // Show gender only for premium users
+    const genderDisplay = u.premium ? (u.gender ?? "Not Set") : "🔒 Hidden";
+
     const text =
     `⚙ Settings
  
- 👤 Gender: ${u.gender ?? "Not Set"}
+ 👤 Gender: ${genderDisplay}
  🎂 Age: ${u.age ?? "Not Set"}
  📍 State: ${u.state ?? "Not Set"}
  💕 Preference: ${u.premium ? (u.preference === "any" ? "Any" : u.preference === "male" ? "Male" : "Female") : "🔒 Premium Only"}
@@ -456,12 +460,28 @@ bot.action("SETUP_CANCEL", async (ctx) => {
 
 // Gender actions
 bot.action("SET_GENDER", async (ctx) => {
+    const user = await getUser(ctx.from.id);
+    
+    // Only allow premium users to change their gender
+    if (!user.premium) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply("🔒 This feature is only available for Premium users.\n\nUpgrade to Premium to set your gender!");
+    }
+    
     await safeAnswerCbQuery(ctx);
     await safeEditMessageText(ctx, "Select your gender:", genderKeyboard);
 });
 
 bot.action("GENDER_MALE", async (ctx) => {
     if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    
+    // Only allow premium users to change their gender
+    if (!user.premium) {
+        await safeAnswerCbQuery(ctx, "🔒 This feature is only available for Premium users!");
+        return;
+    }
+    
     await updateUser(ctx.from.id, { gender: "male" });
     await safeAnswerCbQuery(ctx, "Gender set to Male ✅");
     await showSettings(ctx);
@@ -469,15 +489,32 @@ bot.action("GENDER_MALE", async (ctx) => {
 
 bot.action("GENDER_FEMALE", async (ctx) => {
     if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    
+    // Only allow premium users to change their gender
+    if (!user.premium) {
+        await safeAnswerCbQuery(ctx, "🔒 This feature is only available for Premium users!");
+        return;
+    }
+    
     await updateUser(ctx.from.id, { gender: "female" });
     await safeAnswerCbQuery(ctx, "Gender set to Female ✅");
     await showSettings(ctx);
 });
 
+// Age selection keyboard for settings
+const ageSelectionKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("13-17", "AGE_13_17")],
+    [Markup.button.callback("18-25", "AGE_18_25")],
+    [Markup.button.callback("26-40", "AGE_26_40")],
+    [Markup.button.callback("40+", "AGE_40_PLUS")],
+    [Markup.button.callback("🔙 Back", "OPEN_SETTINGS")]
+]);
+
 // Age actions
 bot.action("SET_AGE", async (ctx) => {
     await safeAnswerCbQuery(ctx);
-    await safeEditMessageText(ctx, "Please enter your age (13-80):", backKeyboard);
+    await safeEditMessageText(ctx, "Select your age range:", ageSelectionKeyboard);
 });
 
 // State actions
@@ -488,20 +525,40 @@ bot.action("SET_STATE", async (ctx) => {
 
 bot.action("STATE_TELANGANA", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { state: "telangana" });
+    await updateUser(ctx.from.id, { state: "Telangana" });
     await safeAnswerCbQuery(ctx, "State set to Telangana ✅");
     await showSettings(ctx);
 });
 
 bot.action("STATE_AP", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { state: "andhra pradesh" });
+    await updateUser(ctx.from.id, { state: "Andhra Pradesh" });
     await safeAnswerCbQuery(ctx, "State set to Andhra Pradesh ✅");
     await showSettings(ctx);
 });
 
-// Preference action - available for all users, but only works for premium
+// Preference action - check premium status and show appropriate message
 bot.action("SET_PREFERENCE", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    
+    if (!user.premium) {
+        // Show premium message for non-premium users
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(
+            "💕 *Gender Preference - Premium Only*\n\n" +
+            "This feature is available for Premium users only.\n\n" +
+            "✨ *Premium Benefits:*\n" +
+            "• Set gender preference (Male/Female)\n" +
+            "• See partner's gender\n" +
+            "• Unlimited daily chats\n" +
+            "• And more!\n\n" +
+            "📞 Contact admin @demonhunter1511 to purchase\n" +
+            "🎁 Or use /settings → Referrals to earn free Premium!",
+            { parse_mode: "Markdown" }
+        );
+    }
+    
     await safeAnswerCbQuery(ctx);
     await safeEditMessageText(ctx, "Select your gender preference:", preferenceKeyboard);
 });
@@ -794,9 +851,13 @@ async function showSetupComplete(ctx: ActionContext) {
     if (!ctx.from) return;
     const user = await getUser(ctx.from.id);
     
-    // Get display values
-    const genderEmoji = user.gender === "male" ? "👨" : user.gender === "female" ? "👩" : "❓";
-    const genderText = user.gender ? (user.gender.charAt(0).toUpperCase() + user.gender.slice(1)) : "Not Set";
+    // Get display values - show gender only for premium users
+    const genderEmoji = user.premium && user.gender 
+        ? (user.gender === "male" ? "👨" : "👩") 
+        : "🔒";
+    const genderText = user.premium && user.gender 
+        ? (user.gender.charAt(0).toUpperCase() + user.gender.slice(1)) 
+        : "Hidden";
     const stateText = user.state === "Other" ? "🌍 Other" : (user.state || "Not Set");
     
     // Check if user has joined the group (optional - for display purposes only)

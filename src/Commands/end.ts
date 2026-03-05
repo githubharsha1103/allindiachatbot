@@ -1,6 +1,6 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { sendMessageWithRetry, cleanupBlockedUser } from "../Utils/telegramErrorHandler";
+import { sendMessageWithRetry, cleanupBlockedUser, cleanupUserMaps } from "../Utils/telegramErrorHandler";
 import { updateUser, getUser, incUserTotalChats } from "../storage/db";
 
 // Rating keyboard with emojis and next button
@@ -73,6 +73,12 @@ export default {
             bot.messageCountMap.delete(id);
             if (partner) {
                 bot.messageCountMap.delete(partner);
+            }
+            
+            // Clean up rate limit entries to prevent memory growth
+            bot.rateLimitMap.delete(id);
+            if (partner) {
+                bot.rateLimitMap.delete(partner);
             }
 
             // Store partner ID for potential report

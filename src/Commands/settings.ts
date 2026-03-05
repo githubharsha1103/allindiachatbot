@@ -18,10 +18,13 @@ export default {
     // Get referral count
     const referralCount = await getReferralCount(ctx.from.id);
 
+    // Show gender only for premium users
+    const genderDisplay = u.premium ? (u.gender ?? "Not Set") : "🔒 Hidden";
+
     const text =
 `⚙ Settings
 
-👤 Gender: ${u.gender ?? "Not Set"}
+👤 Gender: ${genderDisplay}
 🎂 Age: ${u.age ?? "Not Set"}
 📍 State: ${u.state ?? "Not Set"}
 💕 Preference: ${preferenceText}

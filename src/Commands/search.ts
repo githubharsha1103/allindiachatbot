@@ -1,6 +1,6 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { getGender, getUser, updateUser } from "../storage/db";
+import { getGender, getUser, updateUser, incDaily, checkAndResetDaily } from "../storage/db";
 import { sendMessageWithRetry, endChatDueToError } from "../Utils/telegramErrorHandler";
 
 // Setup keyboards for forced setup
@@ -107,17 +107,35 @@ export default {
       return ctx.reply("🚫 Queue is full. Please try again later.");
     }
     
+    // Enforce queue size limit by removing oldest if approaching limit
+    const MAX_QUEUE_SOFT_LIMIT = 9500; // Start removing at 95% capacity
+    while (bot.waitingQueue.length > MAX_QUEUE_SOFT_LIMIT) {
+      bot.waitingQueue.shift(); // Remove oldest user
+      console.log(`[QUEUE] - Queue size limit enforced, removed oldest user`);
+    }
+    
     // Check if user has completed setup (gender, age, state)
     const user = await getUser(userId);
     if (!user.gender || !user.age || !user.state) {
         return redirectToSetup(ctx);
     }
     
+    // Check daily chat limit for non-premium users
+    const canChat = await checkAndResetDaily(userId);
+    if (!canChat) {
+        return ctx.reply(
+            "⏰ *Daily chat limit reached!*\n\n" +
+            "You've used all 100 free chats for today.\n\n" +
+            "💎 *Upgrade to Premium for unlimited chats!*/settings",
+            { parse_mode: "Markdown" }
+        );
+    }
+    
     // Group join is now optional - user can search without joining the group
     // Proceed with search - no group verification needed
 
-    // Acquire mutex to prevent race conditions
-    await bot.queueMutex.acquire();
+    // Acquire mutex to prevent race conditions in matchmaking
+    await bot.matchMutex.acquire();
 
     try {
       // User already fetched above, use that data
@@ -195,10 +213,14 @@ export default {
 
         // Increment chat count
         bot.incrementChatCount();
+        
+        // Increment daily chat count for non-premium user
+        await incDaily(userId);
 
         // Build partner info message - hide gender for non-premium users
-        const partnerGender = isPremium 
-            ? (matchUser.gender ? matchUser.gender.charAt(0).toUpperCase() + matchUser.gender.slice(1) : "Not Set")
+        // Premium users can see partner's gender only if partner has set it
+        const partnerGender = isPremium && matchUser.gender 
+            ? matchUser.gender.charAt(0).toUpperCase() + matchUser.gender.slice(1) 
             : "🔒 Hidden";
         const partnerAge = matchUser.age || "Not Set";
         
@@ -215,8 +237,9 @@ export default {
 /end — Leave the chat`;
 
         // For match user - also hide gender if they're not premium
-        const matchUserGender = user.premium 
-            ? (user.gender ? user.gender.charAt(0).toUpperCase() + user.gender.slice(1) : "Not Set")
+        // Premium users can see their own gender only if they have set it
+        const matchUserGender = user.premium && user.gender 
+            ? user.gender.charAt(0).toUpperCase() + user.gender.slice(1) 
             : "🔒 Hidden";
             
         const matchPartnerInfo = 
@@ -269,7 +292,7 @@ export default {
       return ctx.reply("⏳ Waiting for a partner...");
     } finally {
       // Always release the mutex
-      bot.queueMutex.release();
+      bot.matchMutex.release();
     }
   }
 };
