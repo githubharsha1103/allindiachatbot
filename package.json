@@ -10,15 +10,14 @@
   "license": "MIT",
   "author": "sea-deep",
   "type": "commonjs",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "scripts": {
     "test": "jest --runInBand --config jest.config.js",
     "lint": "eslint . --ext .ts",
-    "start": "npm install --production && node dist/index.js",
+    "start": "node dist/index.js",
     "clean": "rimraf dist",
-    "build": "npm run clean && npm install --production && npx tsc",
-    "init-db": "npx ts-node initDb.ts",
-    "postinstall": "npm install --production"
+    "build": "npm run clean && npx tsc",
+    "init-db": "npx ts-node initDb.ts"
   },
   "dependencies": {
     "dotenv": "^17.3.1",
