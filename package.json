@@ -20,10 +20,10 @@
     "init-db": "npx ts-node initDb.ts"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "telegraf": "^4.16.3",
+    "dotenv": "^17.3.1",
+    "express": "^4.22.1",
     "mongodb": "^7.1.0",
-    "dotenv": "^17.3.1"
+    "telegraf": "^4.16.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
