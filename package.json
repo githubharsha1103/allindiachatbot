@@ -10,11 +10,11 @@
   "license": "MIT",
   "author": "sea-deep",
   "type": "commonjs",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "test": "jest --runInBand --config jest.config.js",
     "lint": "eslint . --ext .ts",
-    "start": "npx tsc && node dist/index.js",
+    "start": "npx tsc && node dist/src/index.js",
     "clean": "rimraf dist",
     "build": "npm run clean && npx tsc",
     "init-db": "npx ts-node initDb.ts"
