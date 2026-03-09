@@ -3,7 +3,7 @@ import { ExtraTelegraf } from "..";
 import { Command } from "../Utils/commandHandler";
 import { Markup } from "telegraf";
 import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getAllReferralStats, tempBanUser, getUserLatestReportReason } from "../storage/db";
-import { isAdmin, isAdminByUsername, isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
+import { isAdmin, isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 
 // Removed local isAdmin/isAdminByUsername - now using shared utility from adminAuth.ts
 
@@ -71,7 +71,7 @@ export default {
 
         const userId = ctx.from.id;
         
-        if (!isAdmin(userId) && !isAdminByUsername(ctx.from.username)) {
+        if (!isAdmin(userId)) {
             return ctx.reply("🚫 You are not authorized to access the admin panel.");
         }
 
@@ -151,7 +151,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     bot.action("ADMIN_BACK", async (ctx) => {
         // Re-validate admin permissions
         const adminId = ctx.from?.id;
-        if (!adminId || (!isAdmin(adminId) && !isAdminByUsername(ctx.from?.username))) {
+        if (!adminId || !isAdmin(adminId)) {
             await safeAnswerCbQuery(ctx, "Unauthorized");
             return;
         }

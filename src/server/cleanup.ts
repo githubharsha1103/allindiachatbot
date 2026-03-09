@@ -20,7 +20,7 @@ export function cleanupStaleData(bot: ExtraTelegraf): void {
       }
     }
     
-    console.log(`[CLEANUP] - Rate limit map size: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length}`);
+    console.log(`[CLEANUP] - Rate limit map: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length} (Set: ${bot.queueSet.size})`);
   } catch (error) {
     console.error("[CLEANUP] - Error during cleanup:", error);
   }
@@ -34,6 +34,19 @@ export function enforceQueueSizeLimit(bot: ExtraTelegraf): void {
   
   if (bot.waitingQueue.length > MAX_QUEUE_SIZE) {
     bot.waitingQueue = bot.waitingQueue.slice(-MAX_QUEUE_SIZE);
+    // Rebuild queueSet after slicing
+    bot.queueSet.clear();
+    for (const user of bot.waitingQueue) {
+      bot.queueSet.add(user.id);
+    }
+  }
+  
+  // Sync queueSet with waitingQueue if out of sync
+  if (bot.queueSet.size !== bot.waitingQueue.length) {
+    bot.queueSet.clear();
+    for (const user of bot.waitingQueue) {
+      bot.queueSet.add(user.id);
+    }
   }
   
   if (bot.waitingQueue.length > MAX_QUEUE_SIZE * 0.8) {
@@ -43,17 +56,30 @@ export function enforceQueueSizeLimit(bot: ExtraTelegraf): void {
 
 /**
  * Ensure users in active chats are not in the waiting queue
+ * Also syncs queueSet with waitingQueue array
  */
 export function filterQueueUsersInChats(bot: ExtraTelegraf): void {
   const initialLength = bot.waitingQueue.length;
   
+  // Filter array - keep users NOT in running chats
   bot.waitingQueue = bot.waitingQueue.filter(user => {
     return !bot.runningChats.has(user.id);
   });
   
+  // Rebuild queueSet to ensure consistency with array
+  bot.queueSet.clear();
+  for (const user of bot.waitingQueue) {
+    bot.queueSet.add(user.id);
+  }
+  
   const removed = initialLength - bot.waitingQueue.length;
   if (removed > 0) {
     console.log(`[CLEANUP] - Removed ${removed} users from queue who were in active chats`);
+  }
+  
+  // Log mismatch if detected
+  if (bot.queueSet.size !== bot.waitingQueue.length) {
+    console.log(`[CLEANUP] - Queue consistency fix: Set size ${bot.queueSet.size}, Array length ${bot.waitingQueue.length}`);
   }
 }
 

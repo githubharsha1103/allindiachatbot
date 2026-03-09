@@ -2,44 +2,43 @@
  * Shared Admin Authentication Utilities
  * This module provides centralized admin validation functions
  * to avoid code duplication across the codebase.
+ * 
+ * SECURITY NOTE: Only numeric Telegram IDs are trusted for admin authentication.
+ * Username-based admin checks have been removed as they can be spoofed.
  */
 
-const ADMINS = process.env.ADMIN_IDS?.split(",") || [];
+const ADMINS = process.env.ADMIN_IDS?.split(",").filter(id => id && !id.startsWith("@")) || [];
 
 // Export ADMINS for use in other modules
 export { ADMINS };
 
 /**
- * Check if a user ID is an admin (by numeric ID)
+ * Check if a user ID is an admin (by numeric ID only)
+ * This is the ONLY secure way to check admin status
  */
 export function isAdmin(id: number): boolean {
+    // Ensure id is a valid number
+    if (!id || isNaN(id)) return false;
     return ADMINS.includes(id.toString());
 }
 
 /**
- * Check if a username is in the admin list (by username with @)
+ * Validate if a user is an admin (numeric ID only)
+ * Username-based checks have been removed for security
  */
-export function isAdminByUsername(username: string | undefined): boolean {
-    if (!username) return false;
-    return ADMINS.some(admin => admin.startsWith("@") && admin.toLowerCase() === `@${username.toLowerCase()}`);
-}
-
-/**
- * Validate if a user is an admin (by ID or username)
- * Returns true if the user is authorized as admin
- */
-export function validateAdmin(id: number, username?: string): boolean {
-    return isAdmin(id) || isAdminByUsername(username);
+export function validateAdmin(id: number, _username?: string): boolean {
+    return isAdmin(id);
 }
 
 /**
  * Helper to extract admin validation check for Telegraf context
- * Returns true if the ctx.from user is authorized as admin
+ * Only uses numeric ID - username is ignored for security
  */
 export function isAdminContext(ctx: any): boolean {
     const userId = ctx.from?.id;
     if (!userId) return false;
-    return validateAdmin(userId, ctx.from?.username);
+    // Only trust numeric ID, ignore username completely
+    return isAdmin(Number(userId));
 }
 
 /**

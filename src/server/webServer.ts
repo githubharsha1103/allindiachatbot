@@ -4,6 +4,18 @@ import { getDatabaseStatus, pingDatabase } from '../storage/db';
 import { isAdmin } from '../Utils/adminAuth';
 
 /**
+ * Validates webhook URL format
+ */
+function isValidWebhookUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.hostname === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Creates and configures the Express web server
  * Handles webhook endpoints and health checks
  */
@@ -88,21 +100,46 @@ export async function startWebServer(
   port: number
 ): Promise<void> {
   const WEBHOOK_PATH = process.env.WEBHOOK_PATH || "/webhook";
+  
+  // Validate webhook URL before starting
   const domain = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
+  
+  if (!domain) {
+    console.error("[ERROR] - Cannot start webhook server: WEBHOOK_URL or RENDER_EXTERNAL_HOSTNAME not set");
+    process.exit(1);
+  }
+  
+  if (!isValidWebhookUrl(domain)) {
+    console.error(`[ERROR] - Invalid webhook URL: ${domain}. Must be HTTPS or localhost.`);
+    process.exit(1);
+  }
+  
   const webhookUrl = `${domain}${WEBHOOK_PATH}`;
+  
+  console.log(`[INFO] - Starting webhook server on port ${port}`);
+  console.log(`[INFO] - Webhook URL: ${webhookUrl}`);
 
-  console.log(`[INFO] - Setting webhook to: ${webhookUrl}`);
-
-  app.listen(port, "0.0.0.0", async () => {
-    console.log(`[INFO] - Server listening on port ${port}`);
-    console.log(`[INFO] - Health check endpoints active`);
-
-    // Set webhook AFTER server is listening
-    try {
-      await bot.telegram.setWebhook(webhookUrl);
-      console.log("[INFO] - Webhook set successfully");
-    } catch (err: any) {
-      console.error("[ERROR] - Failed to set webhook:", err.message);
-    }
+  // Start server first, then set webhook
+  return new Promise((resolve) => {
+    app.listen(port, "0.0.0.0", async () => {
+      console.log(`[INFO] - Server listening on port ${port}`);
+      console.log(`[INFO] - Health check endpoints active`);
+      
+      // Set webhook AFTER server is listening
+      try {
+        // Delete any existing webhook first
+        await bot.telegram.deleteWebhook({});
+        console.log("[INFO] - Deleted existing webhook");
+        
+        // Set new webhook
+        await bot.telegram.setWebhook(webhookUrl);
+        console.log("[INFO] - Webhook set successfully");
+      } catch (err: any) {
+        console.error("[ERROR] - Failed to set webhook:", err.message);
+        // Don't exit - bot can still work in polling mode if webhook fails
+      }
+      
+      resolve();
+    });
   });
 }

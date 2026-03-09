@@ -66,17 +66,15 @@ export function getRetryDelay(error: any): number {
  * This removes the user from waiting queues, active chats, etc.
  */
 export function cleanupBlockedUser(bot: ExtraTelegraf, userId: number): void {
-  let cleanedUp = false;
-
-  // Remove from waiting queue
-  const queueIndex = bot.waitingQueue.findIndex(w => w.id === userId);
-  if (queueIndex !== -1) {
-    bot.waitingQueue.splice(queueIndex, 1);
-    cleanedUp = true;
+  // Remove from waiting queue (both array and Set for O(1) cleanup)
+  if (bot.queueSet.has(userId)) {
+    bot.queueSet.delete(userId);
+    const queueIndex = bot.waitingQueue.findIndex(w => w.id === userId);
+    if (queueIndex !== -1) {
+      bot.waitingQueue.splice(queueIndex, 1);
+    }
     console.log(`[CLEANUP] - User ${userId} removed from waiting queue`);
   }
-
-  // (no waiting property any more)
 
   // Remove from running chats using Map
   if (bot.runningChats.has(userId)) {
@@ -87,7 +85,6 @@ export function cleanupBlockedUser(bot: ExtraTelegraf, userId: number): void {
     bot.runningChats.delete(userId);
     if (partner) bot.runningChats.delete(partner);
     
-    cleanedUp = true;
     console.log(`[CLEANUP] - User ${userId} removed from running chats (partner: ${partner})`);
 
     // Clean up message maps for both users
@@ -109,10 +106,6 @@ export function cleanupBlockedUser(bot: ExtraTelegraf, userId: number): void {
     }
 
     return; // Partner cleanup handled synchronously
-  }
-
-  if (cleanedUp) {
-    console.log(`[CLEANUP] - Completed cleanup for user ${userId}`);
   }
 
   // Note: User data is NOT deleted from database to preserve statistics
@@ -409,8 +402,14 @@ export async function sendMessageWithRetry(
 }
 
 /**
- * Broadcast message to multiple users with rate limiting
+ * Broadcast message to multiple users with rate limiting and chunking
  * BLOCKING: Waits for all messages to be sent before returning
+ * 
+ * Optimizations for large broadcasts (10k+ users):
+ * - Processes users in chunks to avoid memory issues
+ * - Respects Telegram rate limits
+ * - Reports progress periodically
+ * - Handles failures gracefully
  */
 export async function broadcastWithRateLimit(
   bot: ExtraTelegraf,
@@ -422,38 +421,106 @@ export async function broadcastWithRateLimit(
     onProgress?: (success: number, failed: number) => void;
   }
 ): Promise<{ success: number; failed: number; failedUserIds: number[] }> {
+  // Configuration for large broadcasts
+  const CHUNK_SIZE = 100;        // Process 100 users at a time
+  const CHUNK_DELAY = 2000;      // 2 second delay between chunks
+  
+  console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users (chunk size: ${CHUNK_SIZE})`);
+  
+  // For small broadcasts, use the original sequential approach
+  if (userIds.length <= CHUNK_SIZE) {
+    return await broadcastSequential(bot, userIds, text, extra);
+  }
+  
+  // For large broadcasts, use chunked approach
+  const totalChunks = Math.ceil(userIds.length / CHUNK_SIZE);
+  let success = 0;
+  let failed = 0;
+  const failedUserIds: number[] = [];
+  
+  for (let chunk = 0; chunk < totalChunks; chunk++) {
+    const chunkStart = chunk * CHUNK_SIZE;
+    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, userIds.length);
+    const chunkUsers = userIds.slice(chunkStart, chunkEnd);
+    
+    console.log(`[BROADCAST] - Processing chunk ${chunk + 1}/${totalChunks} (${chunkUsers.length} users)`);
+    
+    // Process this chunk sequentially
+    const chunkResult = await broadcastSequential(bot, chunkUsers, text, extra);
+    success += chunkResult.success;
+    failed += chunkResult.failed;
+    failedUserIds.push(...chunkResult.failedUserIds);
+    
+    // Progress log
+    const totalProcessed = (chunk + 1) * CHUNK_SIZE;
+    if (totalProcessed % 500 === 0 || chunk === totalChunks - 1) {
+      console.log(`[BROADCAST] - Progress: ${Math.min(totalProcessed, userIds.length)}/${userIds.length} (${success} sent, ${failed} failed)`);
+    }
+    
+    // Delay between chunks to avoid hitting rate limits
+    if (chunk < totalChunks - 1) {
+      await new Promise(resolve => setTimeout(resolve, CHUNK_DELAY));
+    }
+  }
+  
+  console.log(`[BROADCAST] - Complete! Sent: ${success}, Failed: ${failed} out of ${userIds.length} users`);
+  return { success, failed, failedUserIds };
+}
+
+/**
+ * Sequential broadcast - handles a single chunk of users
+ * Used internally by broadcastWithRateLimit
+ */
+async function broadcastSequential(
+  bot: ExtraTelegraf,
+  userIds: number[],
+  text: string,
+  extra?: {
+    parse_mode?: "Markdown" | "HTML";
+    reply_markup?: any;
+  }
+): Promise<{ success: number; failed: number; failedUserIds: number[] }> {
   const failedUserIds: number[] = [];
   let success = 0;
   let failed = 0;
   const SEND_DELAY = 35;
-  
-  console.log(`[BROADCAST] - Starting broadcast to ${userIds.length} users`);
+  const MAX_RETRIES = 2;
   
   for (let i = 0; i < userIds.length; i++) {
     const userId = userIds[i];
+    let retries = 0;
+    let sent = false;
     
-    try {
-      await bot.telegram.sendMessage(userId, text, extra);
-      success++;
-      
-    } catch (error: any) {
-      // Check for 429 rate limit
-      if (error?.response?.error_code === 429) {
-        const retryAfter = error?.response?.parameters?.retry_after || 5;
-        console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s...`);
-        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-        i--; // Retry this user
-        continue;
+    while (retries < MAX_RETRIES && !sent) {
+      try {
+        await bot.telegram.sendMessage(userId, text, extra);
+        success++;
+        sent = true;
+      } catch (error: any) {
+        // Check for 429 rate limit
+        if (error?.response?.error_code === 429) {
+          const retryAfter = error?.response?.parameters?.retry_after || 5;
+          console.log(`[BROADCAST] - Rate limited! Waiting ${retryAfter}s...`);
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+          retries++;
+          continue;
+        }
+        
+        // Check for other retryable errors (bot blocked, user deactivated)
+        const isRetryable = error?.response?.error_code === 403 || 
+                          error?.response?.error_code === 400;
+        
+        if (isRetryable && retries < MAX_RETRIES - 1) {
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        // Non-retryable error or max retries reached
+        failed++;
+        failedUserIds.push(userId);
+        sent = true; // Stop retrying
       }
-      
-      failed++;
-      failedUserIds.push(userId);
-      console.log(`[BROADCAST] - Failed to send to user ${userId}:`, error?.message || error);
-    }
-    
-    // Progress every 50
-    if ((i + 1) % 50 === 0) {
-      console.log(`[BROADCAST] - Progress: ${i + 1}/${userIds.length} (${success} sent, ${failed} failed)`);
     }
     
     // Delay between messages
@@ -462,6 +529,5 @@ export async function broadcastWithRateLimit(
     }
   }
   
-  console.log(`[BROADCAST] - Complete! Sent: ${success}, Failed: ${failed}`);
   return { success, failed, failedUserIds };
 }

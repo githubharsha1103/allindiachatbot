@@ -91,6 +91,8 @@ class Mutex {
 
 export class ExtraTelegraf extends Telegraf<Context> {
   waitingQueue: { id: number; preference: string; gender: string; isPremium: boolean }[] = [];
+  // Set for O(1) queue membership checks - prevents duplicates and enables fast lookup
+  queueSet: Set<number> = new Set();
   runningChats: Map<number, number> = new Map();
   messageMap: Map<number, { [key: number]: number }> = new Map();
   messageCountMap: Map<number, number> = new Map();
@@ -213,20 +215,31 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   isQueueFull(): boolean {
-    return this.waitingQueue.length >= this.MAX_QUEUE_SIZE;
+    return this.queueSet.size >= this.MAX_QUEUE_SIZE;
   }
 
-  // Atomic queue operations
+  // Check if user is in queue (O(1) using Set)
+  isInQueue(userId: number): boolean {
+    return this.queueSet.has(userId);
+  }
+
+  // Atomic queue operations - all protected by queueMutex
   addToQueueAtomic(user: { id: number; preference: string; gender: string; isPremium: boolean }): boolean {
+    // O(1) check using Set - much faster than array.some()
     if (this.runningChats.has(user.id)) return false;
-    if (this.waitingQueue.some(w => w.id === user.id)) return false;
+    if (this.queueSet.has(user.id)) return false;
     if (this.isQueueFull()) return false;
+    
     this.waitingQueue.push(user);
+    this.queueSet.add(user.id); // O(1) insertion
     return true;
   }
 
   matchFromQueue(userId: number, matchData: { id: number; preference: string; gender: string; isPremium: boolean }): { matched: boolean; partnerId: number | null } {
     const matchIndex = this.waitingQueue.findIndex(w => {
+      // Use Set for O(1) existence check first
+      if (!this.queueSet.has(w.id)) return false;
+      
       const waitingGender = w.gender || "any";
       const waitingPref = w.preference || "any";
       const matchPreference = (matchData.isPremium && matchData.preference !== "any") ? matchData.preference : null;
@@ -242,6 +255,8 @@ export class ExtraTelegraf extends Telegraf<Context> {
     }
     
     const match = this.waitingQueue.splice(matchIndex, 1)[0];
+    this.queueSet.delete(match.id); // O(1) removal
+    
     this.runningChats.set(match.id, userId);
     this.runningChats.set(userId, match.id);
     
@@ -249,10 +264,24 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   removeFromQueue(userId: number): boolean {
+    // O(1) check using Set first
+    if (!this.queueSet.has(userId)) return false;
+    
     const idx = this.waitingQueue.findIndex(w => w.id === userId);
-    if (idx === -1) return false;
+    if (idx === -1) {
+      // Fix inconsistency - user in Set but not in array
+      this.queueSet.delete(userId);
+      return false;
+    }
+    
     this.waitingQueue.splice(idx, 1);
+    this.queueSet.delete(userId); // O(1) removal
     return true;
+  }
+  
+  // Clear queue set - for cleanup purposes
+  clearQueueSet(): void {
+    this.queueSet.clear();
   }
 }
 
