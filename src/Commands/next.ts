@@ -105,7 +105,7 @@ export default {
           if (!added) {
             return ctx.reply("You are already in the queue!");
           }
-          return ctx.reply("? Waiting for a partner...");
+          return ctx.reply("⏳ Waiting for a partner...");
         }
 
         const match = bot.waitingQueue[matchIndex] as WaitingUser;
@@ -142,7 +142,7 @@ export default {
             }
 
             return ctx.reply(
-              "?? Temporary connection issue with partner. You've been added back to the queue...\n? Waiting for a new partner..."
+              "⏳ Temporary connection issue with partner. You've been added back to the queue...\n⏳ Waiting for a new partner..."
             );
           }
 
