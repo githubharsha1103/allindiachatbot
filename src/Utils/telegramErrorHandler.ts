@@ -1,5 +1,4 @@
 import { ExtraTelegraf } from "../index";
-import { Markup } from "telegraf";
 import { updateUser } from "../storage/db";
 import { buildPartnerLeftMessage, clearChatRuntime, exitChatKeyboard } from "./chatFlow";
 
