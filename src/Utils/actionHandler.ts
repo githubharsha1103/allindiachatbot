@@ -255,6 +255,12 @@ bot.action("OPEN_SETTINGS", async (ctx) => {
         await safeAnswerCbQuery(ctx);
         return;
     }
+    
+    // Clean up waitingForAge if user backed out from age input
+    if (ctx.from) {
+        waitingForAge.delete(ctx.from.id);
+    }
+    
     await safeAnswerCbQuery(ctx);
     await showSettings(ctx);
 });
@@ -527,18 +533,30 @@ bot.action("GENDER_FEMALE", async (ctx) => {
 });
 
 // Age selection keyboard for settings
-const ageSelectionKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("15", "AGE_13_17")],
-    [Markup.button.callback("22", "AGE_18_25")],
-    [Markup.button.callback("33", "AGE_26_40")],
-    [Markup.button.callback("45", "AGE_40_PLUS")],
+// Track users waiting for age input
+export const waitingForAge: Set<number> = new Set();
+
+const ageBackKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("🔙 Back", "OPEN_SETTINGS")]
 ]);
 
 // Age actions
 bot.action("SET_AGE", async (ctx) => {
     await safeAnswerCbQuery(ctx);
-    await safeEditMessageText(ctx, "Select your age:", ageSelectionKeyboard);
+    
+    // Add user to waiting list
+    if (ctx.from) {
+        waitingForAge.add(ctx.from.id);
+    }
+    
+    await safeEditMessageText(
+        ctx, 
+        "🎂 *Enter Your Age*\n\n" +
+        "Please enter your age as a number (e.g., 18, 25, 35)\n\n" +
+        "📝 Age must be between 13 and 99\n" +
+        "❌ Use /cancel to go back",
+        { parse_mode: "Markdown", ...ageBackKeyboard }
+    );
 });
 
 // State actions
@@ -1185,35 +1203,6 @@ bot.action("RATE_OKAY", async (ctx) => {
     if (partnerId) {
         await updateUser(partnerId, { chatRating: 3 });
     }
-});
-
-// Age selection buttons for settings
-bot.action("AGE_13_17", async (ctx) => {
-    if (!ctx.from) return;
-    await safeAnswerCbQuery(ctx);
-    await updateUser(ctx.from.id, { age: "15" });
-    await showSettings(ctx);
-});
-
-bot.action("AGE_18_25", async (ctx) => {
-    if (!ctx.from) return;
-    await safeAnswerCbQuery(ctx);
-    await updateUser(ctx.from.id, { age: "22" });
-    await showSettings(ctx);
-});
-
-bot.action("AGE_26_40", async (ctx) => {
-    if (!ctx.from) return;
-    await safeAnswerCbQuery(ctx);
-    await updateUser(ctx.from.id, { age: "33" });
-    await showSettings(ctx);
-});
-
-bot.action("AGE_40_PLUS", async (ctx) => {
-    if (!ctx.from) return;
-    await safeAnswerCbQuery(ctx);
-    await updateUser(ctx.from.id, { age: "45" });
-    await showSettings(ctx);
 });
 
 

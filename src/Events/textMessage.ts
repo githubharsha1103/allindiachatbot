@@ -6,6 +6,7 @@ import { updateUser, getUser, getAllUsers, updateLastActive } from "../storage/d
 import { isBotBlockedError, cleanupBlockedUser, isNotEnoughRightsError, isRateLimitError, getRetryDelay, broadcastWithRateLimit } from "../Utils/telegramErrorHandler";
 import { waitingForBroadcast, waitingForUserId } from "../Commands/adminaccess";
 import { showUserDetails } from "../Commands/adminaccess";
+import { waitingForAge } from "../Utils/actionHandler";
 import { getSetupCompleteText, getSetupStepPrompt } from "../Utils/setupFlow";
 import { buildPartnerLeftMessage, exitChatKeyboard } from "../Utils/chatFlow";
 import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
@@ -136,6 +137,53 @@ export default {
         
         // User exists - show full details with action buttons
         return showUserDetails(ctx, userId);
+    }
+
+    /* ==============================
+       AGE INPUT HANDLER
+     ============================== */
+
+    // Check if user is waiting to enter age
+    if (waitingForAge.has(ctx.from.id)) {
+        const ageText = text?.trim();
+        
+        // Remove from waiting list
+        waitingForAge.delete(ctx.from.id);
+        
+        // Validate input
+        if (!ageText) {
+            return ctx.reply(
+                "❌ Please enter a valid age.",
+                { parse_mode: "Markdown" }
+            );
+        }
+        
+        // Parse age as number
+        const age = parseInt(ageText, 10);
+        
+        // Validate age is a number
+        if (isNaN(age)) {
+            return ctx.reply(
+                "❌ Invalid age. Please enter a number (e.g., 18, 25, 35).",
+                { parse_mode: "Markdown" }
+            );
+        }
+        
+        // Validate age range (13-99)
+        if (age < 13 || age > 99) {
+            return ctx.reply(
+                "❌ Age must be between 13 and 99 years.",
+                { parse_mode: "Markdown" }
+            );
+        }
+        
+        // Update user's age
+        await updateUser(ctx.from.id, { age: age.toString() });
+        
+        return ctx.reply(
+            `🎂 Age set to ${age} years! ✅`,
+            { parse_mode: "Markdown" }
+        );
     }
 
       /* ================================
