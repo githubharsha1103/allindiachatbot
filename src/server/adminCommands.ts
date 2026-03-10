@@ -18,14 +18,14 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
     if (!isAdmin(ctx.from.id)) return;
 
     const id = Number(ctx.message.text.split(" ")[1]);
-    if (!id) return ctx.reply("Usage: /ban USERID");
+    if (!id) return ctx.reply("📝 Usage: /ban USERID");
 
     try {
       await banUser(id);
       ctx.reply(`User ${id} banned`);
     } catch (error) {
       console.error("[Ban command] Error:", error);
-      ctx.reply("Failed to ban user. Please try again.");
+      ctx.reply("⛔ Failed to ban user. Please try again.");
     }
   });
 
@@ -35,13 +35,13 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
     if (!isAdmin(ctx.from.id)) return;
 
     const msg = ctx.message.text.replace("/broadcast", "").trim();
-    if (!msg) return ctx.reply("Usage: /broadcast message");
+    if (!msg) return ctx.reply("📝 Usage: /broadcast message");
 
     try {
       const users = await getAllUsers();
       
       if (users.length === 0) {
-        return ctx.reply("No users to broadcast to.");
+        return ctx.reply("📢 No users to broadcast to.");
       }
 
       const userIds = users.map(id => Number(id)).filter(id => !isNaN(id));
@@ -54,7 +54,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
       ctx.reply(`Broadcast completed!\n✅ Sent: ${success}\n❌ Failed: ${failed}\n\nTotal Users: ${userIds.length}`);
     } catch (error) {
       console.error("[Broadcast command] Error:", error);
-      ctx.reply("Failed to broadcast. Please try again.");
+      ctx.reply("📢 Failed to broadcast. Please try again.");
     }
   });
 
@@ -86,7 +86,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
       ctx.reply(stats, { parse_mode: "HTML" });
     } catch (error) {
       console.error("[Stats command] Error:", error);
-      ctx.reply("Failed to fetch statistics.");
+      ctx.reply("📊 Failed to fetch statistics.");
     }
   });
 
@@ -99,14 +99,14 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
     const id = Number(args[1]);
     const name = args.slice(2).join(" ").trim();
     
-    if (!id || !name) return ctx.reply("Usage: /setname USERID NewName");
+    if (!id || !name) return ctx.reply("📝 Usage: /setname USERID NewName");
     
     try {
       await updateUser(id, { name });
       ctx.reply(`User ${id} name updated to: ${name}`);
     } catch (error) {
       console.error("[Setname command] Error:", error);
-      ctx.reply("Failed to update user name.");
+      ctx.reply("✏️ Failed to update user name.");
     }
   });
 }

@@ -421,7 +421,7 @@ bot.command("setgender", async (ctx) => {
   
   const g = ctx.message.text.split(" ")[1]?.toLowerCase();
   if (!g || !["male", "female"].includes(g)) {
-    return ctx.reply("Use: /setgender male OR /setgender female");
+    return ctx.reply("💕 Use: /setgender male OR /setgender female");
   }
   await setGender(ctx.from.id, g);
   ctx.reply(`Gender set to ${g}`);

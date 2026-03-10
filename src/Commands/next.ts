@@ -26,13 +26,13 @@ export default {
     const userId = ctx.from?.id as number;
 
     if (bot.isRateLimited(userId)) {
-      return ctx.reply("? Please wait a moment before trying again.");
+      return ctx.reply("⏳ Please wait a moment before trying again.");
     }
 
     bot.syncQueueState();
 
     if (bot.isQueueFull()) {
-      return ctx.reply("?? Queue is full. Please try again later.");
+      return ctx.reply("⏳ Queue is full. Please try again later.");
     }
 
     const MAX_QUEUE_SOFT_LIMIT = 9500;
@@ -62,7 +62,7 @@ export default {
           if (!notifySent && partner) {
             cleanupBlockedUser(bot, partner);
             await endChatDueToError(bot, userId, partner);
-            return ctx.reply("?? Partner left the chat");
+            return ctx.reply("⏳ Partner left the chat");
           }
 
           await ctx.reply(buildSelfSkippedMessage(), exitChatKeyboard);
@@ -103,7 +103,7 @@ export default {
             blockedUsers: myBlockedUsers
           });
           if (!added) {
-            return ctx.reply("You are already in the queue!");
+            return ctx.reply("⚠️ You are already in the queue!");
           }
           return ctx.reply("⏳ Waiting for a partner...");
         }
@@ -138,7 +138,7 @@ export default {
               blockedUsers: refreshedUser.blockedUsers || []
             });
             if (!requeued) {
-              return ctx.reply("?? Temporary connection issue. Please try /next again.");
+              return ctx.reply("⏳ Temporary connection issue. Please try /next again.");
             }
 
             return ctx.reply(
@@ -146,14 +146,14 @@ export default {
             );
           }
 
-          return ctx.reply("?? Could not connect to partner. They may have left or restricted the bot.");
+          return ctx.reply("⏳ Could not connect to partner. They may have left or restricted the bot.");
         }
 
         return ctx.reply(userPartnerInfo);
       });
     } catch (error) {
       console.error("[Next command] Match flow failed:", error);
-      return ctx.reply("?? Server is busy. Please try again in a moment.");
+      return ctx.reply("⏳ Server is busy. Please try again in a moment.");
     }
   }
 };

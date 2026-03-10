@@ -27,7 +27,7 @@ export async function redirectToSetup(ctx: Context) {
     return null;
   } catch (error) {
     console.error("[redirectToSetup] Error fetching user:", error);
-    return ctx.reply("?? An error occurred. Please try again.");
+    return ctx.reply("⏳ An error occurred. Please try again.");
   }
 }
 
@@ -38,13 +38,13 @@ export default {
     const userId = ctx.from?.id as number;
 
     if (bot.isRateLimited(userId)) {
-      return ctx.reply("? Please wait a moment before searching again.");
+      return ctx.reply("⏳ Please wait a moment before searching again.");
     }
 
     bot.syncQueueState();
 
     if (bot.isQueueFull()) {
-      return ctx.reply("?? Queue is full. Please try again later.");
+      return ctx.reply("⏳ Queue is full. Please try again later.");
     }
 
     const MAX_QUEUE_SOFT_LIMIT = 9500;
@@ -72,7 +72,7 @@ export default {
         }
 
         if (bot.isInQueue(userId)) {
-          return ctx.reply("You are already in the queue!");
+          return ctx.reply("⚠️ You are already in the queue!");
         }
 
         const matchPreference = isPremium && preference !== "any" ? preference : null;
@@ -105,7 +105,7 @@ export default {
             blockedUsers: myBlockedUsers
           });
           if (!added) {
-            return ctx.reply("You are already in the queue!");
+            return ctx.reply("⚠️ You are already in the queue!");
           }
           return ctx.reply("⏳ Waiting for a partner...");
         }
@@ -154,7 +154,7 @@ export default {
       });
     } catch (error) {
       console.error("[Search command] Match flow failed:", error);
-      return ctx.reply("?? Server is busy. Please try again in a moment.");
+      return ctx.reply("⚠️ Server is busy. Please try again in a moment.");
     }
   }
 };

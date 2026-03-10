@@ -34,7 +34,7 @@ export default {
             message = `Report your last chat partner:\n\nSelect a reason:`;
         }
         else {
-            return ctx.reply("You haven't chatted with anyone yet.");
+            return ctx.reply("⚠️ You haven't chatted with anyone yet.");
         }
 
         // Store the partner ID for this report session

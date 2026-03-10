@@ -38,7 +38,7 @@ export default {
           if (bot.removeFromQueue(id)) {
             return ctx.reply("🔍 Search cancelled. Use /search when you want to find a partner again.");
           }
-          return ctx.reply("You are not in a chat. Use /search to find a partner!");
+          return ctx.reply("⚠️ You are not in a chat. Use /search to find a partner!");
         }
 
         const partner = bot.getPartner(id);
