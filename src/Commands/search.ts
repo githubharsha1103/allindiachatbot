@@ -139,7 +139,7 @@ export default {
               blockedUsers: myBlockedUsers
             });
             if (!requeued) {
-              return ctx.reply("?? Temporary connection issue. Please try /search again.");
+              return ctx.reply("⏳ Temporary connection issue. Please try /search again.");
             }
 
             return ctx.reply(
@@ -147,7 +147,7 @@ export default {
             );
           }
 
-          return ctx.reply("?? Could not connect to partner. They may have left or restricted the bot.");
+          return ctx.reply("⏳ Could not connect to partner. They may have left or restricted the bot.");
         }
 
         return ctx.reply(userPartnerInfo);

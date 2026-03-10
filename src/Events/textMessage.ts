@@ -253,6 +253,25 @@ export default {
       );
     }
 
+    // Fallback: Check if user has an active chat in database (in case of bot restart)
+    const userFromDb = await getUser(ctx.from.id);
+    if (userFromDb.lastPartner && userFromDb.chatStartTime) {
+      // User has a lastPartner in DB - try to verify if partner is still active
+      const partnerId = userFromDb.lastPartner;
+      const partnerFromDb = await getUser(partnerId);
+      
+      // If partner also has this user as lastPartner and has recent chatStartTime, consider chat active
+      if (partnerFromDb.lastPartner === ctx.from.id && partnerFromDb.chatStartTime) {
+        // Chat might be active but runtime state lost - notify user
+        console.log(`[textMessage] Restoring chat state for user ${ctx.from.id} with partner ${partnerId}`);
+        // Don't restore automatically - let user know to reconnect
+        return ctx.reply(
+          "⚠️ Chat session lost due to bot restart.\n" +
+          "Please use /search to find a new partner."
+        );
+      }
+    }
+
     /* =================================
        CHAT FORWARDING
     ================================= */
