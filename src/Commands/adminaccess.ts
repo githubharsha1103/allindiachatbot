@@ -2,7 +2,7 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { Command } from "../Utils/commandHandler";
 import { Markup } from "telegraf";
-import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, resetUserReports } from "../storage/db";
+import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, resetUserReports, getDatabaseStatus } from "../storage/db";
 import { isAdmin, isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { getErrorMessage } from "../Utils/telegramUi";
 import { buildPartnerLeftMessage, clearChatRuntime, exitChatKeyboard } from "../Utils/chatFlow";
@@ -308,8 +308,19 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
         await safeAnswerCbQuery(ctx);
         if (!ctx.from) return;
+        
         userPages.set(ctx.from.id, 0);
-        await showUsersPage(ctx, 0);
+        
+        try {
+            await showUsersPage(ctx, 0);
+        } catch (error) {
+            console.error("[ADMIN_USERS] Error loading users:", error);
+            const errorMessage = getErrorMessage(error);
+            await ctx.reply(
+                `❌ Error loading users: ${errorMessage}\n\nThe bot may be using JSON storage instead of MongoDB.`,
+                { parse_mode: "Markdown" }
+            );
+        }
     });
 
     // Search user by ID
@@ -372,10 +383,15 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const allUsers = await getAllUsers();
         const bans = await readBans();
         
+        // Get database status
+        const dbStatus = getDatabaseStatus();
+        
         // Get total chats from bot instance
         const totalChats = bot.totalChats || 0;
         
         const stats = `📊 *Bot Statistics*\n\n` +
+            `🗄️ Database: ${dbStatus.mode} (${dbStatus.healthy ? "✅ Healthy" : "❌ Unhealthy"})\n` +
+            `📝 Status: ${dbStatus.message}\n\n` +
             `👥 Total Users: ${allUsers.length}\n` +
             `🚫 Banned Users: ${bans.length}\n` +
             `💬 Total Chats: ${totalChats}\n\n` +
