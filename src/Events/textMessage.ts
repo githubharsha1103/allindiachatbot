@@ -260,15 +260,28 @@ export default {
       const partnerId = userFromDb.lastPartner;
       const partnerFromDb = await getUser(partnerId);
       
-      // If partner also has this user as lastPartner and has recent chatStartTime, consider chat active
+      // If partner also has this user as lastPartner and has recent chatStartTime, restore the chat
       if (partnerFromDb.lastPartner === ctx.from.id && partnerFromDb.chatStartTime) {
-        // Chat might be active but runtime state lost - notify user
-        console.log(`[textMessage] Restoring chat state for user ${ctx.from.id} with partner ${partnerId}`);
-        // Don't restore automatically - let user know to reconnect
-        return ctx.reply(
-          "⚠️ Chat session lost due to bot restart.\n" +
-          "Please use /search to find a new partner."
-        );
+        // Restore runtime chat state
+        bot.runningChats.set(ctx.from.id, partnerId);
+        bot.runningChats.set(partnerId, ctx.from.id);
+        
+        // Initialize message tracking for both users if not already present
+        if (!bot.messageMap.has(ctx.from.id)) {
+          bot.messageMap.set(ctx.from.id, {});
+        }
+        if (!bot.messageMap.has(partnerId)) {
+          bot.messageMap.set(partnerId, {});
+        }
+        if (!bot.messageCountMap.has(ctx.from.id)) {
+          bot.messageCountMap.set(ctx.from.id, 0);
+        }
+        if (!bot.messageCountMap.has(partnerId)) {
+          bot.messageCountMap.set(partnerId, 0);
+        }
+        
+        console.log(`[textMessage] Restored chat session for user ${ctx.from.id} with partner ${partnerId}`);
+        // Continue to message forwarding - do NOT block!
       }
     }
 

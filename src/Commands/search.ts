@@ -65,7 +65,8 @@ export default {
         const isPremium = user.premium || false;
         const myBlockedUsers = user.blockedUsers || [];
 
-        if (bot.runningChats.has(userId)) {
+        // Check both runtime state AND database state to prevent stale session issues after bot restart
+        if (bot.runningChats.has(userId) || (user.lastPartner && user.chatStartTime)) {
           return ctx.reply(
             "You are already in a chat!\n\nUse /end to leave the chat or use /next to skip the current chat."
           );
