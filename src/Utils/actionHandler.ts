@@ -167,8 +167,8 @@ async function safeEditMessageText(ctx: ActionContext, text: string, extra?: Par
     }
 }
 
-// Function to show settings menu
-async function showSettings(ctx: ActionContext) {
+// Function to show settings menu - exported for use by /settings command
+export async function showSettings(ctx: ActionContext) {
     if (!ctx.from) return;
     const u = await getUser(ctx.from.id);
     const referralCount = await getReferralCount(ctx.from.id);
@@ -199,8 +199,12 @@ async function showSettings(ctx: ActionContext) {
         [Markup.button.callback("⭐ Premium", "BUY_PREMIUM")]
     ]);
 
-    // Try to edit with fallback to reply
-    await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...keyboard });
+    // Use edit for callback queries, reply for regular commands
+    if (ctx.callbackQuery) {
+        await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...keyboard });
+    } else {
+        await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
+    }
 }
 
 function buildBlockedUsersView(blockedUsers: number[]) {

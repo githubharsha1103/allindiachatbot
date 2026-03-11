@@ -2,10 +2,11 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { Command } from "../Utils/commandHandler";
 import { Markup } from "telegraf";
-import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, resetUserReports, getDatabaseStatus } from "../storage/db";
+import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, resetUserReports, getDatabaseStatus, getPremiumUsers, getPaymentOrders, getUserPaymentHistory, getPremiumPaymentOrder, updateOrderStatus, getExpiringPremiumUsers, getPaymentOrderStats } from "../storage/db";
 import { isAdmin, isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { getErrorMessage } from "../Utils/telegramUi";
 import { buildPartnerLeftMessage, clearChatRuntime, exitChatKeyboard } from "../Utils/chatFlow";
+import { getPaymentAnalytics } from "../Utils/starsPayments";
 
 // Removed local isAdmin/isAdminByUsername - now using shared utility from adminAuth.ts
 
@@ -35,7 +36,7 @@ const mainKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("📣 Re-engagement", "ADMIN_REENGAGE")],
     [Markup.button.callback("📋 View Reports", "ADMIN_VIEW_REPORTS")],
     [Markup.button.callback("🔗 Referral Stats", "ADMIN_REFERRALS")],
-    [Markup.button.callback("🔒 Logout", "ADMIN_LOGOUT")]
+    [Markup.button.callback("💰 Manage Payments", "ADMIN_PAYMENTS")]
 ]);
 
 const backKeyboard = Markup.inlineKeyboard([
@@ -47,8 +48,48 @@ const searchCancelKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("⬅️ Cancel", "ADMIN_SEARCH_BY_ID_CANCEL")]
 ]);
 
+// Payment Management keyboards
+const paymentManagementKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("👑 Premium Users", "ADMIN_PREMIUM_USERS")],
+    [Markup.button.callback("💳 Payment Orders", "ADMIN_PAYMENT_ORDERS")],
+    [Markup.button.callback("📊 Payment Analytics", "ADMIN_PAYMENT_ANALYTICS")],
+    [Markup.button.callback("⏳ Expiring Soon", "ADMIN_PREMIUM_EXPIRING")],
+    [Markup.button.callback("⬅️ Back", "ADMIN_BACK")]
+]);
+
+const premiumUsersBackKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("⬅️ Back to Payments", "ADMIN_PAYMENTS")]
+]);
+
+const premiumUserDetailsKeyboard = (userId: number) => Markup.inlineKeyboard([
+    [Markup.button.callback("➕ Extend Premium", `ADMIN_EXTEND_MENU_${userId}`)],
+    [Markup.button.callback("❌ Remove Premium", `ADMIN_REMOVE_PREMIUM_${userId}`)],
+    [Markup.button.callback("📜 Payment History", `ADMIN_PAYMENT_HISTORY_${userId}`)],
+    [Markup.button.callback("⬅️ Back", "ADMIN_PREMIUM_USERS")]
+]);
+
+const extendPremiumKeyboard = (userId: number) => Markup.inlineKeyboard([
+    [Markup.button.callback("+7 Days", `ADMIN_EXTEND_7_${userId}`)],
+    [Markup.button.callback("+30 Days", `ADMIN_EXTEND_30_${userId}`)],
+    [Markup.button.callback("+365 Days", `ADMIN_EXTEND_365_${userId}`)],
+    [Markup.button.callback("⬅️ Back", `ADMIN_PREMIUM_USER_${userId}`)]
+]);
+
+const paymentOrdersBackKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("⬅️ Back to Payments", "ADMIN_PAYMENTS")]
+]);
+
+const orderDetailsKeyboard = (orderId: string) => Markup.inlineKeyboard([
+    [Markup.button.callback("👤 View User", `ADMIN_VIEW_ORDER_USER_${orderId}`)],
+    [Markup.button.callback("❌ Mark Failed", `ADMIN_MARK_ORDER_FAILED_${orderId}`)],
+    [Markup.button.callback("⬅️ Back", "ADMIN_PAYMENT_ORDERS")]
+]);
+
 const userPages: Map<number, number> = new Map();
 const reportPages: Map<number, number> = new Map();
+const premiumUserPages: Map<number, number> = new Map();
+const paymentOrderPages: Map<number, number> = new Map();
+const expiringPageMap: Map<number, number> = new Map();
 
 // Track admins waiting for broadcast input
 export const waitingForBroadcast: Set<number> = new Set();
@@ -778,6 +819,695 @@ export function initAdminActions(bot: ExtraTelegraf) {
             "🔐 *Admin Panel*\n\nYou have been logged out.",
             { parse_mode: "Markdown" }
         );
+    });
+
+    // ==================== PAYMENT MANAGEMENT ====================
+    
+    // Payment Management Menu
+    bot.action("ADMIN_PAYMENTS", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        await safeEditMessageText(ctx,
+            "💰 *Payment Management*\n\nManage premium users, payment orders, and analytics.",
+            { parse_mode: "Markdown", ...paymentManagementKeyboard }
+        );
+    });
+
+    // Premium Users List
+    bot.action("ADMIN_PREMIUM_USERS", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        // Reset pagination to page 0
+        premiumUserPages.set(ctx.from.id, 0);
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_PAYMENT_VIEWED",
+            adminId: ctx.from.id,
+            panel: "PREMIUM_USERS",
+            timestamp: new Date().toISOString()
+        }));
+        
+        const page = 0;
+        const { users, total } = await getPremiumUsers(page, 10);
+        
+        if (total === 0) {
+            await safeEditMessageText(ctx,
+                "👑 *Premium Users*\n\nNo premium users found.",
+                { parse_mode: "Markdown", ...premiumUsersBackKeyboard }
+            );
+            return;
+        }
+        
+        const totalPages = Math.ceil(total / 10);
+        let message = `👑 *Premium Users*\n\n`;
+        message += `Total: ${total} users\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const user of users) {
+            message += `User ${user.telegramId}\n`;
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+        }
+        
+        // Navigation buttons
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_PREMIUM_USERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_PREMIUM_USERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Premium Users Pagination
+    bot.action(/ADMIN_PREMIUM_USERS_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        const page = parseInt(ctx.match[1]);
+        premiumUserPages.set(ctx.from.id, page);
+        
+        const { users, total } = await getPremiumUsers(page, 10);
+        const totalPages = Math.ceil(total / 10);
+        
+        let message = `👑 *Premium Users*\n\n`;
+        message += `Total: ${total} users\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const user of users) {
+            message += `User ${user.telegramId}\n`;
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+        }
+        
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_PREMIUM_USERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_PREMIUM_USERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Premium User Details
+    bot.action(/ADMIN_PREMIUM_USER_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const userId = parseInt(ctx.match[1]);
+        const user = await getUser(userId);
+        
+        if (!user) {
+            await safeEditMessageText(ctx,
+                "⚠️ User not found.",
+                { parse_mode: "Markdown", ...premiumUsersBackKeyboard }
+            );
+            return;
+        }
+        
+        const premiumExpiry = user.premiumExpires || user.premiumExpiry || 0;
+        const expiryDate = premiumExpiry > 0 ? new Date(premiumExpiry).toLocaleDateString() : "N/A";
+        
+        const history = await getUserPaymentHistory(userId);
+        const totalPayments = history.length;
+        const lastPayment = history.length > 0 ? new Date(history[0].createdAt).toLocaleDateString() : "N/A";
+        
+        let message = `👑 *Premium User Details*\n\n`;
+        message += `User ID: \`${userId}\`\n`;
+        message += `Premium Status: ${user.premium ? "✅ Active" : "❌ Inactive"}\n`;
+        message += `Premium Expiry: ${expiryDate}\n`;
+        message += `Total Payments: ${totalPayments}\n`;
+        message += `Last Payment: ${lastPayment}\n`;
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: premiumUserDetailsKeyboard(userId)
+        });
+    });
+
+    // Extend Premium Menu
+    bot.action(/ADMIN_EXTEND_MENU_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const userId = parseInt(ctx.match[1]);
+        
+        await safeEditMessageText(ctx,
+            `➕ *Extend Premium*\n\nUser: \`${userId}\`\n\nSelect extension period:`,
+            { parse_mode: "Markdown", reply_markup: extendPremiumKeyboard(userId) }
+        );
+    });
+
+    // Extend Premium Actions
+    bot.action(/ADMIN_EXTEND_(\d+)_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const days = parseInt(ctx.match[1]);
+        const userId = parseInt(ctx.match[2]);
+        
+        const user = await getUser(userId);
+        if (!user) {
+            await safeEditMessageText(ctx, "⚠️ User not found.", { parse_mode: "Markdown", ...premiumUsersBackKeyboard });
+            return;
+        }
+        
+        const currentExpiry = user.premiumExpires || user.premiumExpiry || Date.now();
+        const newExpiry = Math.max(currentExpiry, Date.now()) + (days * 24 * 60 * 60 * 1000);
+        
+        await updateUser(userId, {
+            premium: true,
+            premiumExpires: newExpiry,
+            premiumExpiry: newExpiry
+        });
+        
+        const newExpiryDate = new Date(newExpiry).toLocaleDateString();
+        
+        console.log(JSON.stringify({
+            type: "ADMIN_PREMIUM_EXTENDED",
+            adminId: ctx.from?.id,
+            userId,
+            daysAdded: days,
+            newExpiry: newExpiryDate,
+            timestamp: new Date().toISOString()
+        }));
+        
+        await safeEditMessageText(ctx,
+            `✅ *Premium Extended*\n\nUser: \`${userId}\`\n` +
+            `Added: +${days} days\n` +
+            `New expiry: ${newExpiryDate}`,
+            { parse_mode: "Markdown", reply_markup: premiumUserDetailsKeyboard(userId) }
+        );
+    });
+
+    // Remove Premium
+    bot.action(/ADMIN_REMOVE_PREMIUM_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const userId = parseInt(ctx.match[1]);
+        
+        await updateUser(userId, {
+            premium: false,
+            premiumExpires: undefined,
+            premiumExpiry: undefined
+        });
+        
+        console.log(JSON.stringify({
+            type: "ADMIN_PREMIUM_REMOVED",
+            adminId: ctx.from?.id,
+            userId,
+            timestamp: new Date().toISOString()
+        }));
+        
+        await safeEditMessageText(ctx,
+            `❌ *Premium Removed*\n\nUser \`${userId}\` no longer has premium status.`,
+            { parse_mode: "Markdown", reply_markup: premiumUsersBackKeyboard }
+        );
+    });
+
+    // Payment History
+    bot.action(/ADMIN_PAYMENT_HISTORY_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const userId = parseInt(ctx.match[1]);
+        const history = await getUserPaymentHistory(userId);
+        
+        if (history.length === 0) {
+            await safeEditMessageText(ctx,
+                `📜 *Payment History*\n\nUser: \`${userId}\`\n\nNo payment history found.`,
+                { parse_mode: "Markdown", reply_markup: premiumUserDetailsKeyboard(userId) }
+            );
+            return;
+        }
+        
+        let message = `📜 *Payment History*\n\nUser: \`${userId}\`\n\n`;
+        
+        for (const order of history.slice(0, 10)) {
+            message += `Order: \`${order.orderId}\`\n`;
+            message += `  Plan: ${order.planId}\n`;
+            message += `  Amount: ${order.starsAmount} Stars\n`;
+            message += `  Status: ${order.status}\n`;
+            message += `  Date: ${new Date(order.createdAt).toLocaleString()}\n\n`;
+        }
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: premiumUserDetailsKeyboard(userId)
+        });
+    });
+
+    // Payment Orders List
+    bot.action("ADMIN_PAYMENT_ORDERS", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        // Reset pagination to page 0
+        paymentOrderPages.set(ctx.from.id, 0);
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_PAYMENT_VIEWED",
+            adminId: ctx.from.id,
+            panel: "PAYMENT_ORDERS",
+            timestamp: new Date().toISOString()
+        }));
+        
+        const page = 0;
+        const { orders, total } = await getPaymentOrders(page, 10);
+        
+        if (total === 0) {
+            await safeEditMessageText(ctx,
+                "💳 *Payment Orders*\n\nNo payment orders found.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        const totalPages = Math.ceil(total / 10);
+        let message = `💳 *Payment Orders*\n\n`;
+        message += `Total: ${total} orders\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const order of orders) {
+            message += `Order: \`${order.orderId}\` - ${order.status}\n`;
+            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}`)]);
+        }
+        
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_ORDERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_ORDERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Payment Orders Pagination
+    bot.action(/ADMIN_ORDERS_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        const page = parseInt(ctx.match[1]);
+        paymentOrderPages.set(ctx.from.id, page);
+        
+        const { orders, total } = await getPaymentOrders(page, 10);
+        const totalPages = Math.ceil(total / 10);
+        
+        let message = `💳 *Payment Orders*\n\n`;
+        message += `Total: ${total} orders\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const order of orders) {
+            message += `Order: \`${order.orderId}\` - ${order.status}\n`;
+            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}`)]);
+        }
+        
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_ORDERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_ORDERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Order Details
+    bot.action(/ADMIN_ORDER_DETAILS_(.+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const orderId = ctx.match[1];
+        const order = await getPremiumPaymentOrder(orderId);
+        
+        if (!order) {
+            await safeEditMessageText(ctx,
+                "⚠️ Order not found.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        let message = `💳 *Order Details*\n\n`;
+        message += `Order ID: \`${order.orderId}\`\n`;
+        message += `User ID: \`${order.userId}\`\n`;
+        message += `Plan: ${order.planId}\n`;
+        message += `Stars Amount: ${order.starsAmount}\n`;
+        message += `Status: ${order.status}\n`;
+        message += `Created: ${new Date(order.createdAt).toLocaleString()}\n`;
+        if (order.paidAt) {
+            message += `Paid: ${new Date(order.paidAt).toLocaleString()}\n`;
+        }
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: orderDetailsKeyboard(orderId)
+        });
+    });
+
+    // View Order User
+    bot.action(/ADMIN_VIEW_ORDER_USER_(.+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const orderId = ctx.match[1];
+        const order = await getPremiumPaymentOrder(orderId);
+        
+        if (!order) {
+            await safeEditMessageText(ctx, "⚠️ Order not found.", { parse_mode: "Markdown", ...paymentOrdersBackKeyboard });
+            return;
+        }
+        
+        // Navigate to user details
+        const userId = order.userId;
+        const user = await getUser(userId);
+        
+        if (!user) {
+            await safeEditMessageText(ctx, "⚠️ User not found.", { parse_mode: "Markdown", ...paymentOrdersBackKeyboard });
+            return;
+        }
+        
+        const premiumExpiry = user.premiumExpires || user.premiumExpiry || 0;
+        const expiryDate = premiumExpiry > 0 ? new Date(premiumExpiry).toLocaleDateString() : "N/A";
+        
+        let message = `👤 *User Details*\n\n`;
+        message += `User ID: \`${userId}\`\n`;
+        message += `Premium Status: ${user.premium ? "✅ Active" : "❌ Inactive"}\n`;
+        message += `Premium Expiry: ${expiryDate}\n`;
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: premiumUserDetailsKeyboard(userId)
+        });
+    });
+
+    // Mark Order Failed
+    bot.action(/ADMIN_MARK_ORDER_FAILED_(.+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const orderId = ctx.match[1];
+        const order = await getPremiumPaymentOrder(orderId);
+        
+        if (!order) {
+            await safeEditMessageText(ctx,
+                "⚠️ Order not found.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        // Protect paid orders from being marked as failed
+        if (order.status === "paid") {
+            await safeEditMessageText(ctx,
+                "⚠️ This order is already marked as PAID and cannot be changed.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        await updateOrderStatus(orderId, "failed");
+        
+        console.log(JSON.stringify({
+            type: "ADMIN_ORDER_MARKED_FAILED",
+            adminId: ctx.from?.id,
+            orderId,
+            timestamp: new Date().toISOString()
+        }));
+        
+        await safeEditMessageText(ctx,
+            `❌ *Order Marked as Failed*\n\nOrder \`${orderId}\` has been marked as failed.`,
+            { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+        );
+    });
+
+    // Payment Analytics
+    bot.action("ADMIN_PAYMENT_ANALYTICS", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_PAYMENT_VIEWED",
+            adminId: ctx.from.id,
+            panel: "PAYMENT_ANALYTICS",
+            timestamp: new Date().toISOString()
+        }));
+        
+        const analytics = getPaymentAnalytics();
+        
+        // Get premium user count
+        const { total: premiumUserCount } = await getPremiumUsers(0, 1);
+        
+        // Get order statistics
+        const orderStats = await getPaymentOrderStats();
+        
+        const analyticsKeyboard = Markup.inlineKeyboard([
+            [Markup.button.callback("🔄 Refresh", "ADMIN_PAYMENT_ANALYTICS")],
+            [Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]
+        ]);
+        
+        let message = `📊 *Payment Analytics*\n\n`;
+        message += `Total Purchases: \`${analytics.totalPurchases}\`\n`;
+        message += `Total Revenue (Stars): \`${analytics.totalRevenueStars}\`\n`;
+        message += `Active Premium Users: \`${premiumUserCount}\`\n`;
+        message += `Orders Pending: \`${orderStats.pending}\`\n`;
+        message += `Orders Failed: \`${orderStats.failed}\`\n`;
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: analyticsKeyboard
+        });
+    });
+
+    // Premium Expiring Soon
+    bot.action("ADMIN_PREMIUM_EXPIRING", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        // Reset pagination to page 0
+        expiringPageMap.set(ctx.from.id, 0);
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_PAYMENT_VIEWED",
+            adminId: ctx.from.id,
+            panel: "PREMIUM_EXPIRING",
+            page: 0,
+            timestamp: new Date().toISOString()
+        }));
+        
+        const page = 0;
+        const pageSize = 10;
+        const { users: expiringUsers, total } = await getExpiringPremiumUsers(48, pageSize, 0);
+        
+        const expiringSoonBackKeyboard = Markup.inlineKeyboard([
+            [Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]
+        ]);
+        
+        if (total === 0) {
+            await safeEditMessageText(ctx,
+                "⏳ *Premium Expiring Soon*\n\nNo premium users expiring within 48 hours.",
+                { parse_mode: "Markdown", reply_markup: expiringSoonBackKeyboard }
+            );
+            return;
+        }
+        
+        const totalPages = Math.ceil(total / pageSize);
+        
+        let message = `⏳ *Premium Expiring Soon*\n\n`;
+        message += `Users expiring within 48 hours: ${total}\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const user of expiringUsers.slice(0, pageSize)) {
+            const expiryTime = user.premiumExpires || 0;
+            const hoursLeft = Math.max(Math.round((expiryTime - Date.now()) / (1000 * 60 * 60)), 0);
+            message += `User ${user.telegramId} – expires in ${hoursLeft}h\n`;
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+        }
+        
+        // Navigation buttons
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_PREMIUM_EXPIRING_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_PREMIUM_EXPIRING_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Premium Expiring Pagination
+    bot.action(/ADMIN_PREMIUM_EXPIRING_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        const page = Math.max(parseInt(ctx.match[1]), 0);
+        expiringPageMap.set(ctx.from.id, page);
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_PAYMENT_VIEWED",
+            adminId: ctx.from.id,
+            panel: "PREMIUM_EXPIRING",
+            page: page,
+            timestamp: new Date().toISOString()
+        }));
+        
+        const pageSize = 10;
+        const { users: expiringUsers, total } = await getExpiringPremiumUsers(48, pageSize, page * pageSize);
+        
+        const expiringSoonBackKeyboard = Markup.inlineKeyboard([
+            [Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]
+        ]);
+        
+        if (total === 0) {
+            await safeEditMessageText(ctx,
+                "⏳ *Premium Expiring Soon*\n\nNo premium users expiring within 48 hours.",
+                { parse_mode: "Markdown", reply_markup: expiringSoonBackKeyboard }
+            );
+            return;
+        }
+        
+        const totalPages = Math.ceil(total / pageSize);
+        
+        let message = `⏳ *Premium Expiring Soon*\n\n`;
+        message += `Users expiring within 48 hours: ${total}\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const user of expiringUsers.slice(0, pageSize)) {
+            const expiryTime = user.premiumExpires || 0;
+            const hoursLeft = Math.max(Math.round((expiryTime - Date.now()) / (1000 * 60 * 60)), 0);
+            message += `User ${user.telegramId} – expires in ${hoursLeft}h\n`;
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+        }
+        
+        // Navigation buttons
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_PREMIUM_EXPIRING_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_PREMIUM_EXPIRING_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
     });
 
     // Pagination actions

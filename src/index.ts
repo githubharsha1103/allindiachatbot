@@ -421,6 +421,19 @@ export class ExtraTelegraf extends Telegraf<Context> {
 
   // ==================== Message Queue for Rate Limiting ====================
   
+  // Current message delay (can be increased during flood control)
+  private _currentMessageDelayMs: number = 40;
+  // Flag to track if we're in flood wait mode
+  private _inFloodWait: boolean = false;
+  // Timestamp when flood wait ends
+  private _floodWaitUntil: number = 0;
+  // Maximum delay during flood control (5 seconds)
+  private readonly MAX_FLOOD_DELAY_MS = 5000;
+  // Base delay
+  private readonly BASE_MESSAGE_DELAY_MS = 40;
+  // Flood wait duration when 429 error occurs (in ms)
+  private readonly FLOOD_WAIT_DURATION_MS = 1000;
+  
   // Queue a message to be sent with rate limiting
   queueMessage(userId: number, text: string, extra?: unknown): void {
     // Queue size protection - drop oldest if too many messages
@@ -446,6 +459,20 @@ export class ExtraTelegraf extends Telegraf<Context> {
       const item = this._messageQueue.shift();
       if (!item) continue;
       
+      // Check if we're in flood wait mode
+      if (this._inFloodWait && Date.now() < this._floodWaitUntil) {
+        const waitTime = this._floodWaitUntil - Date.now();
+        await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 1000)));
+        continue;
+      }
+      
+      // Exit flood wait mode if time has passed
+      if (this._inFloodWait && Date.now() >= this._floodWaitUntil) {
+        this._inFloodWait = false;
+        this._currentMessageDelayMs = this.BASE_MESSAGE_DELAY_MS;
+        console.log("[INFO] Exited flood wait mode, restored message delay to base level");
+      }
+      
       // Try sending with retry logic
       let sent = false;
       for (let attempt = 0; attempt <= this.MESSAGE_RETRY_COUNT && !sent; attempt++) {
@@ -453,6 +480,36 @@ export class ExtraTelegraf extends Telegraf<Context> {
           await this.telegram.sendMessage(item.userId, item.text, item.extra as any);
           sent = true;
         } catch (error) {
+          // Check for flood control error (429)
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const isFloodError = errorMessage.includes("429") || 
+                              errorMessage.toLowerCase().includes("too many requests") ||
+                              errorMessage.includes("Flood control");
+          
+          if (isFloodError) {
+            // Enter flood wait mode
+            this._inFloodWait = true;
+            this._floodWaitUntil = Date.now() + this.FLOOD_WAIT_DURATION_MS;
+            
+            // Increase delay temporarily (but cap at max)
+            this._currentMessageDelayMs = Math.min(
+              this._currentMessageDelayMs + 500,
+              this.MAX_FLOOD_DELAY_MS
+            );
+            
+            // Log the flood event
+            console.log(JSON.stringify({
+              type: "TELEGRAM_FLOOD_DETECTED",
+              userId: item.userId,
+              currentDelayMs: this._currentMessageDelayMs,
+              floodWaitUntil: new Date(this._floodWaitUntil).toISOString(),
+              timestamp: new Date().toISOString()
+            }));
+            
+            // Retry immediately after flood wait
+            continue;
+          }
+          
           if (attempt < this.MESSAGE_RETRY_COUNT) {
             // Wait before retry
             await new Promise(resolve => setTimeout(resolve, this.MESSAGE_RETRY_DELAY_MS));
@@ -462,8 +519,8 @@ export class ExtraTelegraf extends Telegraf<Context> {
         }
       }
       
-      // Rate limiting delay
-      await new Promise(resolve => setTimeout(resolve, this.MESSAGE_DELAY_MS));
+      // Rate limiting delay (using adaptive delay)
+      await new Promise(resolve => setTimeout(resolve, this._currentMessageDelayMs));
     }
     
     this._isProcessingQueue = false;
@@ -478,20 +535,46 @@ export class ExtraTelegraf extends Telegraf<Context> {
     // Sync queue states to ensure consistency - removes users in running chats
     this.syncQueueState();
     
-    // Also sync premium queue
+    // Also sync premium queue - remove users who are:
+    // 1. No longer premium (not in premiumUsers Set)
+    // 2. Already in running chats
+    // 3. Duplicate entries
     const seenPremium = new Set<number>();
     const normalizedPremiumQueue = this.premiumQueue.filter(u => {
-      if (!u || seenPremium.has(u.id) || this.runningChats.has(u.id)) {
+      if (!u) {
         removed++;
         return false;
       }
+      
+      // Remove duplicates
+      if (seenPremium.has(u.id)) {
+        removed++;
+        return false;
+      }
+      
+      // Remove users already in running chats
+      if (this.runningChats.has(u.id)) {
+        removed++;
+        return false;
+      }
+      
+      // Remove users who are no longer premium
+      if (!this.premiumUsers.has(u.id)) {
+        removed++;
+        return false;
+      }
+      
       seenPremium.add(u.id);
       return true;
     });
     
-    if (removed > 0) {
+    if (removed > 0 || normalizedPremiumQueue.length !== this.premiumQueue.length) {
       this.premiumQueue = normalizedPremiumQueue;
-      this.premiumQueueSet = seenPremium;
+      // Rebuild premiumQueueSet to ensure synchronization
+      this.premiumQueueSet.clear();
+      for (const user of this.premiumQueue) {
+        this.premiumQueueSet.add(user.id);
+      }
     }
     
     return removed;

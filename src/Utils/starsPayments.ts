@@ -1,6 +1,6 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { getUser, updateUser, User, createPremiumPaymentOrder, addProcessedPaymentChargeId, getPremiumPaymentOrder, finalizePremiumPayment } from "../storage/db";
+import { getUser, updateUser, User, createPremiumPaymentOrder, addProcessedPaymentChargeId, getPremiumPaymentOrder, finalizePremiumPayment, updateOrderStatus } from "../storage/db";
 
 // Rate limiting for invoice creation
 const invoiceCooldown = new Map<number, number>();
@@ -135,6 +135,17 @@ async function createPremiumInvoice(ctx: Context, plan: PremiumPlan): Promise<bo
     // Use order ID as payload for security
     const payload = `order_${order.orderId}`;
 
+    // Structured logging for invoice creation
+    console.log(JSON.stringify({
+      type: "INVOICE_CREATED",
+      userId,
+      orderId: order.orderId,
+      plan: plan.id,
+      amount: plan.amount,
+      premiumDays: plan.days,
+      timestamp: new Date().toISOString()
+    }));
+
     await ctx.telegram.sendInvoice(userId, {
       title: "Premium Subscription",
       description: `Unlock premium features - ${plan.name}`,
@@ -146,10 +157,26 @@ async function createPremiumInvoice(ctx: Context, plan: PremiumPlan): Promise<bo
 
     return true;
   } catch (error) {
+    // Structured logging for invoice creation failure
+    console.log(JSON.stringify({
+      type: "INVOICE_CREATION_FAILED",
+      userId,
+      plan: plan.id,
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
+    }));
     console.error("[ERROR] - Failed to create premium invoice:", error);
     await ctx.reply("Failed to create invoice. Please try again.");
     return false;
   }
+}
+
+// Order expiry time in milliseconds (30 minutes)
+const ORDER_EXPIRY_MS = 30 * 60 * 1000;
+
+// Check if an order has expired
+function isOrderExpired(order: { createdAt: number }): boolean {
+  return Date.now() - order.createdAt > ORDER_EXPIRY_MS;
 }
 
 // Get order ID from payload (new format: order_<orderId> or legacy: premium_<plan>)
@@ -226,24 +253,87 @@ export function initStarsPaymentHandlers(bot: ExtraTelegraf): void {
       const order = await getPremiumPaymentOrder(orderId);
       
       if (!order) {
+        // Structured logging for order not found
+        console.log(JSON.stringify({
+          type: "PRE_CHECKOUT_VALIDATION_FAILED",
+          userId: query.from.id,
+          orderId,
+          reason: "Order not found",
+          timestamp: new Date().toISOString()
+        }));
         await ctx.answerPreCheckoutQuery(false, "Order not found.");
         return;
       }
 
       if (order.userId !== query.from.id) {
+        // Structured logging for user mismatch
+        console.log(JSON.stringify({
+          type: "PRE_CHECKOUT_VALIDATION_FAILED",
+          userId: query.from.id,
+          orderId,
+          orderUserId: order.userId,
+          reason: "User mismatch",
+          timestamp: new Date().toISOString()
+        }));
         await ctx.answerPreCheckoutQuery(false, "Order user mismatch.");
         return;
       }
 
+      // Check if order has expired
+      if (isOrderExpired(order)) {
+        // Mark order as expired
+        await updateOrderStatus(orderId, "expired");
+        // Structured logging for expired order
+        console.log(JSON.stringify({
+          type: "PRE_CHECKOUT_VALIDATION_FAILED",
+          userId: query.from.id,
+          orderId,
+          reason: "Order expired",
+          createdAt: new Date(order.createdAt).toISOString(),
+          timestamp: new Date().toISOString()
+        }));
+        await ctx.answerPreCheckoutQuery(false, "Order has expired. Please create a new one.");
+        return;
+      }
+
       if (order.status !== "pending") {
+        // Structured logging for order not pending
+        console.log(JSON.stringify({
+          type: "PRE_CHECKOUT_VALIDATION_FAILED",
+          userId: query.from.id,
+          orderId,
+          orderStatus: order.status,
+          reason: "Order not pending",
+          timestamp: new Date().toISOString()
+        }));
         await ctx.answerPreCheckoutQuery(false, "Order is not pending.");
         return;
       }
 
       if (order.starsAmount !== query.total_amount) {
+        // Structured logging for amount mismatch
+        console.log(JSON.stringify({
+          type: "PRE_CHECKOUT_VALIDATION_FAILED",
+          userId: query.from.id,
+          orderId,
+          expectedAmount: order.starsAmount,
+          receivedAmount: query.total_amount,
+          reason: "Amount mismatch",
+          timestamp: new Date().toISOString()
+        }));
         await ctx.answerPreCheckoutQuery(false, "Invalid payment amount.");
         return;
       }
+
+      // Structured logging for successful pre-checkout validation
+      console.log(JSON.stringify({
+        type: "PRE_CHECKOUT_VALIDATION_SUCCESS",
+        userId: query.from.id,
+        orderId,
+        amount: query.total_amount,
+        plan: order.planId,
+        timestamp: new Date().toISOString()
+      }));
 
       await ctx.answerPreCheckoutQuery(true);
       return;
@@ -253,11 +343,29 @@ export function initStarsPaymentHandlers(bot: ExtraTelegraf): void {
     const plan = getPlanFromPayload(payload);
 
     if (!plan) {
+      // Structured logging for invalid plan
+      console.log(JSON.stringify({
+        type: "PRE_CHECKOUT_VALIDATION_FAILED",
+        userId: query.from.id,
+        payload,
+        reason: "Invalid plan",
+        timestamp: new Date().toISOString()
+      }));
       await ctx.answerPreCheckoutQuery(false, "Invalid plan selected.");
       return;
     }
 
     if (query.total_amount !== plan.amount) {
+      // Structured logging for legacy amount mismatch
+      console.log(JSON.stringify({
+        type: "PRE_CHECKOUT_VALIDATION_FAILED",
+        userId: query.from.id,
+        payload,
+        expectedAmount: plan.amount,
+        receivedAmount: query.total_amount,
+        reason: "Amount mismatch",
+        timestamp: new Date().toISOString()
+      }));
       await ctx.answerPreCheckoutQuery(false, "Invalid payment amount.");
       return;
     }
@@ -327,11 +435,12 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
     
     // Validate order exists
     if (!order) {
-      console.error(JSON.stringify({
-        type: "PAYMENT_ORDER_NOT_FOUND",
+      console.log(JSON.stringify({
+        type: "PAYMENT_FAILURE",
         userId,
         orderId,
         chargeId: successfulPayment.telegram_payment_charge_id,
+        reason: "Order not found",
         timestamp: new Date().toISOString()
       }));
       await ctx.reply("Payment received, but order not found. Please contact support.");
@@ -340,11 +449,13 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
 
     // Validate user owns the order
     if (order.userId !== userId) {
-      console.error(JSON.stringify({
-        type: "PAYMENT_USER_MISMATCH",
+      console.log(JSON.stringify({
+        type: "PAYMENT_FAILURE",
         userId,
-        orderUserId: order.userId,
         orderId,
+        orderUserId: order.userId,
+        chargeId: successfulPayment.telegram_payment_charge_id,
+        reason: "User mismatch",
         timestamp: new Date().toISOString()
       }));
       await ctx.reply("Payment received, but user mismatch. Please contact support.");
@@ -353,11 +464,13 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
 
     // Validate order is pending
     if (order.status !== "pending") {
-      console.error(JSON.stringify({
-        type: "PAYMENT_ORDER_NOT_PENDING",
+      console.log(JSON.stringify({
+        type: "PAYMENT_FAILURE",
         userId,
         orderId,
         orderStatus: order.status,
+        chargeId: successfulPayment.telegram_payment_charge_id,
+        reason: "Order not pending",
         timestamp: new Date().toISOString()
       }));
       await ctx.reply("Payment already processed or invalid. Please contact support.");
@@ -366,12 +479,14 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
 
     // Validate amount matches
     if (order.starsAmount !== successfulPayment.total_amount) {
-      console.error(JSON.stringify({
-        type: "PAYMENT_AMOUNT_MISMATCH",
+      console.log(JSON.stringify({
+        type: "PAYMENT_FAILURE",
         userId,
         orderId,
-        expected: order.starsAmount,
-        received: successfulPayment.total_amount,
+        expectedAmount: order.starsAmount,
+        receivedAmount: successfulPayment.total_amount,
+        chargeId: successfulPayment.telegram_payment_charge_id,
+        reason: "Amount mismatch",
         timestamp: new Date().toISOString()
       }));
       await ctx.reply("Payment received, but amount mismatch. Please contact support.");
@@ -386,11 +501,28 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
     );
 
     if (!result.success) {
+      console.log(JSON.stringify({
+        type: "PAYMENT_FAILURE",
+        userId,
+        orderId,
+        chargeId: successfulPayment.telegram_payment_charge_id,
+        reason: "Payment processing failed",
+        message: result.message,
+        timestamp: new Date().toISOString()
+      }));
       await ctx.reply("Payment processing failed. Please contact support.");
       return true;
     }
 
     if (result.alreadyProcessed) {
+      console.log(JSON.stringify({
+        type: "PAYMENT_DUPLICATE",
+        userId,
+        orderId,
+        chargeId: successfulPayment.telegram_payment_charge_id,
+        premiumUntil: result.premiumUntil,
+        timestamp: new Date().toISOString()
+      }));
       await ctx.reply(
         `Payment already processed.\n\n⏳ Valid until: ${formatDate(result.premiumUntil || Date.now())}`
       );

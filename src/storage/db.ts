@@ -9,6 +9,12 @@ const isValidMongoDBUri = MONGODB_URI &&
   
 const DB_NAME = process.env.DB_NAME || "telugu_anomybot";
 
+// Order expiry time in milliseconds (30 minutes)
+const ORDER_EXPIRY_MS = 30 * 60 * 1000;
+
+// Export for use in other modules
+export { ORDER_EXPIRY_MS };
+
 // MongoDB connection options for better SSL/TLS compatibility
 const isSrvConnection = MONGODB_URI.startsWith("mongodb+srv://");
 const MONGO_OPTIONS = {
@@ -130,6 +136,77 @@ export interface User {
 }
 
 export type PremiumOrderStatus = "pending" | "paid" | "failed" | "expired";
+
+export async function updateOrderStatus(
+  orderId: string,
+  status: PremiumOrderStatus
+): Promise<boolean> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPremiumOrdersCollection();
+      const result = await collection.updateOne(
+        { orderId },
+        { $set: { status } }
+      );
+      return result.modifiedCount > 0;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB updateOrderStatus error:", error);
+      return false;
+    }
+  }
+
+  const orders = await readJson<JsonPaymentOrdersDb>(PAYMENT_ORDERS_FILE);
+  if (orders[orderId]) {
+    orders[orderId] = { ...orders[orderId], status };
+    await writeJson(PAYMENT_ORDERS_FILE, orders);
+    return true;
+  }
+  return false;
+}
+
+// Expire old pending premium orders (orders older than 30 minutes)
+export async function expireOldPremiumOrders(): Promise<number> {
+  const expiryTime = Date.now() - ORDER_EXPIRY_MS;
+  let expiredCount = 0;
+
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPremiumOrdersCollection();
+      const result = await collection.updateMany(
+        {
+          status: "pending",
+          createdAt: { $lt: expiryTime }
+        },
+        { $set: { status: "expired" } }
+      );
+      expiredCount = result.modifiedCount;
+      
+      if (expiredCount > 0) {
+        console.log(`[ORDER_EXPIRY] - Expired ${expiredCount} pending premium orders`);
+      }
+      return expiredCount;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB expireOldPremiumOrders error:", error);
+      return 0;
+    }
+  }
+
+  // JSON fallback
+  const orders = await readJson<JsonPaymentOrdersDb>(PAYMENT_ORDERS_FILE);
+  for (const [orderId, order] of Object.entries(orders)) {
+    if (order.status === "pending" && order.createdAt < expiryTime) {
+      orders[orderId] = { ...order, status: "expired" };
+      expiredCount++;
+    }
+  }
+
+  if (expiredCount > 0) {
+    await writeJson(PAYMENT_ORDERS_FILE, orders);
+    console.log(`[ORDER_EXPIRY] - Expired ${expiredCount} pending premium orders (JSON mode)`);
+  }
+
+  return expiredCount;
+}
 
 export interface PremiumPaymentOrder {
   _id?: ObjectId;
@@ -2129,6 +2206,178 @@ export async function addProcessedPaymentChargeId(
 
   await writeJson(JSON_FILE, users);
   return { success: true, alreadyExists: false };
+}
+
+// ==================== PAYMENT ADMIN FUNCTIONS ====================
+
+// Get premium users with pagination
+export async function getPremiumUsers(page: number = 0, limit: number = 10): Promise<{ users: User[]; total: number }> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getUsersCollection();
+      const users = await collection.find({ premium: true })
+        .sort({ premiumExpires: -1 })
+        .skip(page * limit)
+        .limit(limit)
+        .toArray();
+      
+      const total = await collection.countDocuments({ premium: true });
+      return { users, total };
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getPremiumUsers error:", error);
+      return { users: [], total: 0 };
+    }
+  }
+
+  // JSON fallback
+  const allUsers = await getAllUsers();
+  const premiumUsers: User[] = [];
+  
+  for (const id of allUsers) {
+    const user = await getUser(parseInt(id));
+    if (user.premium) {
+      premiumUsers.push(user);
+    }
+  }
+  
+  // Sort by premium expiry descending
+  premiumUsers.sort((a, b) => (b.premiumExpires || b.premiumExpiry || 0) - (a.premiumExpires || a.premiumExpiry || 0));
+  
+  const start = page * limit;
+  return {
+    users: premiumUsers.slice(start, start + limit),
+    total: premiumUsers.length
+  };
+}
+
+// Get payment orders with pagination
+export async function getPaymentOrders(page: number = 0, limit: number = 10): Promise<{ orders: PremiumPaymentOrder[]; total: number }> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPremiumOrdersCollection();
+      const orders = await collection.find({})
+        .sort({ createdAt: -1 })
+        .skip(page * limit)
+        .limit(limit)
+        .toArray();
+      
+      const total = await collection.countDocuments({});
+      return { orders, total };
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getPaymentOrders error:", error);
+      return { orders: [], total: 0 };
+    }
+  }
+
+  // JSON fallback
+  const ordersData = await readJson<JsonPaymentOrdersDb>(PAYMENT_ORDERS_FILE);
+  const orders = Object.values(ordersData).sort((a, b) => b.createdAt - a.createdAt);
+  
+  const start = page * limit;
+  return {
+    orders: orders.slice(start, start + limit) as PremiumPaymentOrder[],
+    total: orders.length
+  };
+}
+
+// Get payment history for a specific user
+export async function getUserPaymentHistory(userId: number): Promise<PremiumPaymentOrder[]> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPremiumOrdersCollection();
+      return await collection.find({ userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getUserPaymentHistory error:", error);
+      return [];
+    }
+  }
+
+  // JSON fallback
+  const ordersData = await readJson<JsonPaymentOrdersDb>(PAYMENT_ORDERS_FILE);
+  return Object.values(ordersData)
+    .filter(order => order.userId === userId)
+    .sort((a, b) => b.createdAt - a.createdAt) as PremiumPaymentOrder[];
+}
+
+// Get premium users expiring within a certain number of hours
+export async function getExpiringPremiumUsers(hoursAhead: number = 48, limit: number = 10, skip: number = 0): Promise<{ users: User[]; total: number }> {
+  const now = Date.now();
+  const expiryThreshold = now + (hoursAhead * 60 * 60 * 1000);
+  
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getUsersCollection();
+      const users = await collection.find({
+        premium: true,
+        premiumExpires: { $gt: now, $lt: expiryThreshold }
+      })
+        .sort({ premiumExpires: 1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+      
+      const total = await collection.countDocuments({
+        premium: true,
+        premiumExpires: { $gt: now, $lt: expiryThreshold }
+      });
+      
+      return { users, total };
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getExpiringPremiumUsers error:", error);
+      return { users: [], total: 0 };
+    }
+  }
+
+  // JSON fallback
+  const allUsers = await getAllUsers();
+  const expiringUsers: User[] = [];
+  
+  for (const id of allUsers) {
+    const user = await getUser(parseInt(id));
+    if (user.premium && user.premiumExpires) {
+      if (user.premiumExpires > now && user.premiumExpires < expiryThreshold) {
+        expiringUsers.push(user);
+      }
+    }
+  }
+  
+  // Sort by expiry time
+  expiringUsers.sort((a, b) => (a.premiumExpires || 0) - (b.premiumExpires || 0));
+  
+  return {
+    users: expiringUsers.slice(skip, skip + limit),
+    total: expiringUsers.length
+  };
+}
+
+// Get payment order statistics
+export async function getPaymentOrderStats(): Promise<{ pending: number; failed: number; paid: number }> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPremiumOrdersCollection();
+      const [pending, failed, paid] = await Promise.all([
+        collection.countDocuments({ status: "pending" }),
+        collection.countDocuments({ status: "failed" }),
+        collection.countDocuments({ status: "paid" })
+      ]);
+      return { pending, failed, paid };
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getPaymentOrderStats error:", error);
+      return { pending: 0, failed: 0, paid: 0 };
+    }
+  }
+
+  // JSON fallback
+  const ordersData = await readJson<JsonPaymentOrdersDb>(PAYMENT_ORDERS_FILE);
+  const orders = Object.values(ordersData);
+  
+  return {
+    pending: orders.filter(o => o.status === "pending").length,
+    failed: orders.filter(o => o.status === "failed").length,
+    paid: orders.filter(o => o.status === "paid").length
+  };
 }
 
 export async function revokeExpiredPremiumUsers(): Promise<number> {

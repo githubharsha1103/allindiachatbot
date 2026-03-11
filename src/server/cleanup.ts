@@ -1,5 +1,5 @@
 import { ExtraTelegraf } from '../index';
-import { closeDatabase, revokeExpiredPremiumUsers } from '../storage/db';
+import { closeDatabase, revokeExpiredPremiumUsers, expireOldPremiumOrders } from '../storage/db';
 
 /**
  * Cleanup and maintenance tasks
@@ -132,6 +132,15 @@ export function registerCleanupTasks(bot: ExtraTelegraf): void {
     console.error("[CLEANUP] - Startup premium cleanup failed:", error);
   });
 
+  // Run expired orders cleanup once on startup
+  expireOldPremiumOrders().then(expired => {
+    if (expired > 0) {
+      console.log(`[CLEANUP] - Expired ${expired} pending premium orders`);
+    }
+  }).catch(error => {
+    console.error("[CLEANUP] - Startup order expiry cleanup failed:", error);
+  });
+
   // Run cleanup every 5 minutes
   setInterval(() => cleanupStaleData(bot), 300000);
   
@@ -155,6 +164,18 @@ export function registerCleanupTasks(bot: ExtraTelegraf): void {
       console.error("[CLEANUP] - Error revoking expired premium users:", error);
     }
   }, 3600000);
+
+  // Expire old pending orders every 10 minutes
+  setInterval(async () => {
+    try {
+      const expired = await expireOldPremiumOrders();
+      if (expired > 0) {
+        console.log(`[CLEANUP] - Expired ${expired} pending premium orders`);
+      }
+    } catch (error) {
+      console.error("[CLEANUP] - Error expiring old orders:", error);
+    }
+  }, 600000); // 10 minutes
 }
 
 /**
