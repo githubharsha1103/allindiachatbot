@@ -61,12 +61,17 @@ const premiumUsersBackKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("⬅️ Back to Payments", "ADMIN_PAYMENTS")]
 ]);
 
-const premiumUserDetailsKeyboard = (userId: number) => Markup.inlineKeyboard([
-    [Markup.button.callback("➕ Extend Premium", `ADMIN_EXTEND_MENU_${userId}`)],
-    [Markup.button.callback("❌ Remove Premium", `ADMIN_REMOVE_PREMIUM_${userId}`)],
-    [Markup.button.callback("📜 Payment History", `ADMIN_PAYMENT_HISTORY_${userId}`)],
-    [Markup.button.callback("⬅️ Back", "ADMIN_PREMIUM_USERS")]
-]);
+const premiumUserDetailsKeyboard = (userId: number, backPage?: number) => {
+    const backCallback = backPage !== undefined 
+        ? `ADMIN_BACK_TO_PREMIUM_PAGE_${backPage}` 
+        : "ADMIN_PREMIUM_USERS";
+    return Markup.inlineKeyboard([
+        [Markup.button.callback("➕ Extend Premium", `ADMIN_EXTEND_MENU_${userId}`)],
+        [Markup.button.callback("❌ Remove Premium", `ADMIN_REMOVE_PREMIUM_${userId}`)],
+        [Markup.button.callback("📜 Payment History", `ADMIN_PAYMENT_HISTORY_${userId}`)],
+        [Markup.button.callback("⬅️ Back", backCallback)]
+    ]);
+};
 
 const extendPremiumKeyboard = (userId: number) => Markup.inlineKeyboard([
     [Markup.button.callback("+7 Days", `ADMIN_EXTEND_7_${userId}`)],
@@ -79,11 +84,16 @@ const paymentOrdersBackKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("⬅️ Back to Payments", "ADMIN_PAYMENTS")]
 ]);
 
-const orderDetailsKeyboard = (orderId: string) => Markup.inlineKeyboard([
-    [Markup.button.callback("👤 View User", `ADMIN_VIEW_ORDER_USER_${orderId}`)],
-    [Markup.button.callback("❌ Mark Failed", `ADMIN_MARK_ORDER_FAILED_${orderId}`)],
-    [Markup.button.callback("⬅️ Back", "ADMIN_PAYMENT_ORDERS")]
-]);
+const orderDetailsKeyboard = (orderId: string, backPage?: number) => {
+    const backCallback = backPage !== undefined 
+        ? `ADMIN_BACK_TO_ORDERS_PAGE_${backPage}` 
+        : "ADMIN_PAYMENT_ORDERS";
+    return Markup.inlineKeyboard([
+        [Markup.button.callback("👤 View User", `ADMIN_VIEW_ORDER_USER_${orderId}`)],
+        [Markup.button.callback("❌ Mark Failed", `ADMIN_MARK_ORDER_FAILED_${orderId}`)],
+        [Markup.button.callback("⬅️ Back", backCallback)]
+    ]);
+};
 
 const userPages: Map<number, number> = new Map();
 const reportPages: Map<number, number> = new Map();
@@ -846,8 +856,10 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await safeAnswerCbQuery(ctx);
         if (!ctx.from) return;
         
-        // Reset pagination to page 0
-        premiumUserPages.set(ctx.from.id, 0);
+        // Only reset to page 0 if not already viewing a specific page
+        if (!premiumUserPages.has(ctx.from.id)) {
+            premiumUserPages.set(ctx.from.id, 0);
+        }
         
         // Log admin action
         console.log(JSON.stringify({
@@ -876,7 +888,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const buttons: any[] = [];
         for (const user of users) {
             message += `User ${user.telegramId}\n`;
-            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}_PAGE_${page}`)]);
         }
         
         // Navigation buttons
@@ -920,7 +932,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const buttons: any[] = [];
         for (const user of users) {
             message += `User ${user.telegramId}\n`;
-            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}`)]);
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}_PAGE_${page}`)]);
         }
         
         const navButtons: any[] = [];
@@ -941,8 +953,8 @@ export function initAdminActions(bot: ExtraTelegraf) {
         });
     });
 
-    // Premium User Details
-    bot.action(/ADMIN_PREMIUM_USER_(\d+)/, async (ctx) => {
+    // Premium User Details (with page info)
+    bot.action(/ADMIN_PREMIUM_USER_(\d+)_PAGE_(\d+)/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -950,6 +962,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await safeAnswerCbQuery(ctx);
         
         const userId = parseInt(ctx.match[1]);
+        const backPage = parseInt(ctx.match[2]);
         const user = await getUser(userId);
         
         if (!user) {
@@ -976,7 +989,50 @@ export function initAdminActions(bot: ExtraTelegraf) {
         
         await safeEditMessageText(ctx, message, {
             parse_mode: "Markdown",
-            reply_markup: premiumUserDetailsKeyboard(userId)
+            reply_markup: premiumUserDetailsKeyboard(userId, backPage)
+        });
+    });
+
+    // Back to Premium Users at specific page
+    bot.action(/ADMIN_BACK_TO_PREMIUM_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        const page = parseInt(ctx.match[1]);
+        premiumUserPages.set(ctx.from.id, page);
+        
+        const { users, total } = await getPremiumUsers(page, 10);
+        const totalPages = Math.ceil(total / 10);
+        
+        let message = `👑 *Premium Users*\n\n`;
+        message += `Total: ${total} users\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const user of users) {
+            message += `User ${user.telegramId}\n`;
+            buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}_PAGE_${page}`)]);
+        }
+        
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_PREMIUM_USERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_PREMIUM_USERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
         });
     });
 
@@ -1114,8 +1170,10 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await safeAnswerCbQuery(ctx);
         if (!ctx.from) return;
         
-        // Reset pagination to page 0
-        paymentOrderPages.set(ctx.from.id, 0);
+        // Only reset to page 0 if not already viewing a specific page
+        if (!paymentOrderPages.has(ctx.from.id)) {
+            paymentOrderPages.set(ctx.from.id, 0);
+        }
         
         // Log admin action
         console.log(JSON.stringify({
@@ -1144,7 +1202,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const buttons: any[] = [];
         for (const order of orders) {
             message += `Order: \`${order.orderId}\` - ${order.status}\n`;
-            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}`)]);
+            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}_PAGE_${page}`)]);
         }
         
         const navButtons: any[] = [];
@@ -1187,7 +1245,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const buttons: any[] = [];
         for (const order of orders) {
             message += `Order: \`${order.orderId}\` - ${order.status}\n`;
-            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}`)]);
+            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}_PAGE_${page}`)]);
         }
         
         const navButtons: any[] = [];
@@ -1208,8 +1266,88 @@ export function initAdminActions(bot: ExtraTelegraf) {
         });
     });
 
-    // Order Details
-    bot.action(/ADMIN_ORDER_DETAILS_(.+)/, async (ctx) => {
+    // Order Details (supports both with and without page info)
+    bot.action(/ADMIN_ORDER_DETAILS_(.+)_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        
+        const orderId = ctx.match[1];
+        const backPage = parseInt(ctx.match[2]);
+        const order = await getPremiumPaymentOrder(orderId);
+        
+        if (!order) {
+            await safeEditMessageText(ctx,
+                "⚠️ Order not found.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        let message = `💳 *Order Details*\n\n`;
+        message += `Order ID: \`${order.orderId}\`\n`;
+        message += `User ID: \`${order.userId}\`\n`;
+        message += `Plan: ${order.planId}\n`;
+        message += `Stars Amount: ${order.starsAmount}\n`;
+        message += `Status: ${order.status}\n`;
+        message += `Created: ${new Date(order.createdAt).toLocaleString()}\n`;
+        if (order.paidAt) {
+            message += `Paid: ${new Date(order.paidAt).toLocaleString()}\n`;
+        }
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: orderDetailsKeyboard(orderId, backPage)
+        });
+    });
+
+    // Back to Payment Orders at specific page
+    bot.action(/ADMIN_BACK_TO_ORDERS_PAGE_(\d+)/, async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        const page = parseInt(ctx.match[1]);
+        paymentOrderPages.set(ctx.from.id, page);
+        
+        const { orders, total } = await getPaymentOrders(page, 10);
+        const totalPages = Math.ceil(total / 10);
+        
+        let message = `💳 *Payment Orders*\n\n`;
+        message += `Total: ${total} orders\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: any[] = [];
+        for (const order of orders) {
+            message += `Order: \`${order.orderId}\` - ${order.status}\n`;
+            buttons.push([Markup.button.callback(`Order ${order.orderId.slice(-8)}`, `ADMIN_ORDER_DETAILS_${order.orderId}_PAGE_${page}`)]);
+        }
+        
+        const navButtons: any[] = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_ORDERS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_ORDERS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(ctx, message, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons }
+        });
+    });
+
+    // Order Details (without page - legacy)
+    bot.action(/ADMIN_ORDER_DETAILS_([^-].+)/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
