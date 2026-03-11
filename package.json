@@ -12,7 +12,7 @@
   "type": "commonjs",
   "main": "dist/index.js",
   "scripts": {
-    "test": "jest --runInBand --config jest.config.js",
+    "test": "set NODE_ENV=test&& jest --runInBand --config jest.config.js",
     "lint": "eslint . --ext .ts",
     "start": "node dist/index.js",
     "clean": "rimraf dist",

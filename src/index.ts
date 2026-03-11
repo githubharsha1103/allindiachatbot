@@ -726,7 +726,9 @@ import { createWebServer, startWebServer } from "./server/webServer";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 // Check deployment mode
-if (isProduction()) {
+if (process.env.NODE_ENV === "test") {
+  console.log("[INFO] - Test mode detected. Bot launch skipped.");
+} else if (isProduction()) {
   // Production: Use webhooks
   const app = createWebServer(bot);
   startWebServer(app, bot, PORT);
@@ -739,8 +741,11 @@ if (isProduction()) {
 /* ---------------- CLEANUP TASKS (Modular) ---------------- */
 import { registerCleanupTasks, setupGracefulShutdown } from "./server/cleanup";
 
-registerCleanupTasks(bot);
-setupGracefulShutdown(bot);
+// Disable background tasks during tests
+if (process.env.NODE_ENV !== "test") {
+  registerCleanupTasks(bot);
+  setupGracefulShutdown(bot);
+}
 
 // Clear state on startup
 bot.runningChats.clear();
