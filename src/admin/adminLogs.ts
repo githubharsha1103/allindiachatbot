@@ -12,7 +12,7 @@
 import { Context, Markup } from "telegraf";
 import { isAdmin, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, safeEditMessageText, getErrorMessage } from "../Utils/telegramUi";
-import { saveAdminLog as dbSaveAdminLog, getAdminLogs as dbGetAdminLogs } from "../storage/db";
+import { saveAdminLog as dbSaveAdminLog, getAdminLogs as dbGetAdminLogs } from "../storage/db"; // eslint-disable-line @typescript-eslint/no-unused-vars
 
 // ==================== Types ====================
 
