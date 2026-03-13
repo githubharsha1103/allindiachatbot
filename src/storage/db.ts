@@ -110,6 +110,7 @@ export interface User {
   reportReason: string | null;
   blockedUsers?: number[]; // Personal blocklist for premium users
   isAdminAuthenticated: boolean;
+  adminSessionExpiresAt?: number; // Admin session expiry timestamp
   chatStartTime: number | null;
   reportCount?: number;
   banReason?: string | null;
@@ -420,7 +421,7 @@ export async function pingDatabase(): Promise<boolean> {
 // Log which storage mode is being used
 if (useMongoDB && !isFallbackMode) {
   console.log("[INFO] - MongoDB URI detected, will use MongoDB for data storage");
-  console.log("[INFO] - MongoDB URI:", MONGODB_URI.substring(0, 20) + "..."); // Log partial URI for debugging
+  console.log("[INFO] - MongoDB connection configured"); // Don't log URI to avoid credential exposure
 } else if (!useMongoDB) {
   console.log("[INFO] - No MongoDB URI found (or using placeholder), using JSON file storage");
 } else {
@@ -459,6 +460,7 @@ export async function getUser(id: number): Promise<UserWithNew> {
         reportReason: null,
         blockedUsers: [],
         isAdminAuthenticated: false,
+        adminSessionExpiresAt: undefined,
         chatStartTime: null,
         reportCount: 0,
         totalChats: 0,
@@ -494,6 +496,7 @@ export async function getUser(id: number): Promise<UserWithNew> {
       reportReason: null,
       blockedUsers: [],
       isAdminAuthenticated: false,
+      adminSessionExpiresAt: undefined,
       chatStartTime: null,
       reports: 0,
       banned: false,
@@ -1453,7 +1456,21 @@ const LAST_ACTIVE_FLUSH_INTERVAL = 5000; // 5 seconds
 const MAX_QUEUE_SIZE = 1000;
 
 export async function updateLastActive(id: number): Promise<void> {
-  lastActiveUpdateQueue.set(id, Date.now());
+  const now = Date.now();
+  
+  // Safeguard against memory growth - if queue is too large, trigger immediate flush
+  // This is safer than rebuilding the map which can cause race conditions
+  if (lastActiveUpdateQueue.size > 2000) {
+    // Attempt to flush immediately to clear queue
+    try {
+      await flushLastActiveUpdates();
+    } catch (error) {
+      // If flush fails, continue - will try again next update
+      console.error("[LAST_ACTIVE] Emergency flush failed:", error);
+    }
+  }
+  
+  lastActiveUpdateQueue.set(id, now);
   
   // If queue is too large, flush immediately
   if (lastActiveUpdateQueue.size >= MAX_QUEUE_SIZE) {
@@ -1475,13 +1492,13 @@ async function flushLastActiveUpdates(): Promise<void> {
       const collection = await getUsersCollection();
       const bulkOps = Array.from(updates.entries()).map(([userId, lastActive]) => ({
         updateOne: {
-          filter: { id: userId },
+          filter: { telegramId: userId },
           update: { $set: { lastActive } }
         }
       }));
       
       if (bulkOps.length > 0) {
-        await collection.bulkWrite(bulkOps);
+        await collection.bulkWrite(bulkOps, { ordered: false });
       }
     } catch (error) {
       console.error("[ERROR] - MongoDB flushLastActiveUpdates error:", error);
@@ -2431,5 +2448,125 @@ export async function closeDatabase(): Promise<void> {
     db = null;
     console.log("[INFO] - MongoDB connection closed");
   }
+}
+
+// ==================== Settings Persistence ====================
+
+interface AppSettings {
+  _id: string;
+  type: string;
+  data: Record<string, unknown>;
+  updatedAt: number;
+}
+
+/**
+ * Get settings by type from the database
+ */
+export async function getSettings<T>(type: string): Promise<T | null> {
+  if (useMongoDB && !isFallbackMode && db) {
+    try {
+      const collection = db.collection<AppSettings>("settings");
+      const result = await collection.findOne({ type });
+      if (result) {
+        return result.data as T;
+      }
+    } catch (error) {
+      console.error(`[SETTINGS] Error getting ${type} settings:`, error);
+    }
+  }
+  return null;
+}
+
+/**
+ * Save settings to the database
+ */
+export async function saveSettings<T>(type: string, data: T): Promise<void> {
+  if (useMongoDB && !isFallbackMode && db) {
+    try {
+      const collection = db.collection<AppSettings>("settings");
+      await collection.updateOne(
+        { type },
+        {
+          $set: {
+            data: data as Record<string, unknown>,
+            updatedAt: Date.now()
+          }
+        },
+        { upsert: true }
+      );
+    } catch (error) {
+      console.error(`[SETTINGS] Error saving ${type} settings:`, error);
+    }
+  }
+}
+
+// ==================== Admin Log Persistence ====================
+
+interface AdminLogEntry {
+  _id?: string;
+  adminId: number;
+  action: string;
+  targetUserId?: number;
+  details?: Record<string, unknown>;
+  timestamp: number;
+}
+
+/**
+ * Save admin log entry to database
+ */
+export async function saveAdminLog(log: AdminLogEntry): Promise<void> {
+  if (useMongoDB && !isFallbackMode && db) {
+    try {
+      const collection = db.collection<AdminLogEntry>("admin_logs");
+      await collection.insertOne(log);
+      
+      // Cleanup old logs (keep last 30 days)
+      const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+      await collection.deleteMany({ timestamp: { $lt: cutoff } });
+    } catch (error) {
+      console.error("[ADMIN_LOGS] Error saving log:", error);
+    }
+  }
+}
+
+/**
+ * Get admin logs from database with optional filters
+ */
+export async function getAdminLogs(
+  filters: {
+    adminId?: number;
+    action?: string;
+    targetUserId?: number;
+    startDate?: number;
+    endDate?: number;
+  },
+  limit: number = 100
+): Promise<AdminLogEntry[]> {
+  if (useMongoDB && !isFallbackMode && db) {
+    try {
+      const collection = db.collection<AdminLogEntry>("admin_logs");
+      const query: Record<string, unknown> = {};
+      
+      if (filters.adminId) query.adminId = filters.adminId;
+      if (filters.action) query.action = filters.action;
+      if (filters.targetUserId) query.targetUserId = filters.targetUserId;
+      if (filters.startDate || filters.endDate) {
+        query.timestamp = {};
+        if (filters.startDate) (query.timestamp as Record<string, number>).$gte = filters.startDate;
+        if (filters.endDate) (query.timestamp as Record<string, number>).$lte = filters.endDate;
+      }
+      
+      const results = await collection
+        .find(query)
+        .sort({ timestamp: -1 })
+        .limit(limit)
+        .toArray();
+      
+      return results;
+    } catch (error) {
+      console.error("[ADMIN_LOGS] Error getting logs:", error);
+    }
+  }
+  return [];
 }
 

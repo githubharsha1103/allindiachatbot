@@ -661,8 +661,9 @@ loadEvents();
 loadActions();
 
 /* ---------------- ADMIN PANEL ---------------- */
-import { initAdminActions } from "./Commands/adminaccess";
+import { initAdminActions, startSessionCleanup } from "./Commands/adminaccess";
 initAdminActions(bot);
+startSessionCleanup();
 
 /* ---------------- RE-ENGAGEMENT ---------------- */
 import { initReengagementActions } from "./Commands/reengagement";
@@ -679,6 +680,12 @@ referral.initActions(bot);
 /* ---------------- ADMIN COMMANDS (Modular) ---------------- */
 import { registerAdminCommands } from "./server/adminCommands";
 registerAdminCommands(bot);
+
+/* ---------------- ADMIN MODULES ---------------- */
+import { registerAdminCallbacks } from "./admin/index";
+import { loadModerationSettings } from "./admin/moderationSettings";
+registerAdminCallbacks(bot);
+loadModerationSettings().catch(err => console.error("[INIT] Failed to load moderation settings:", err));
 
 /* ---------------- ADMIN CHECK ---------------- */
 // Admin check is now handled in adminCommands.ts

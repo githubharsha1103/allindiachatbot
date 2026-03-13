@@ -8,6 +8,56 @@ import { getErrorMessage } from "../Utils/telegramUi";
 import { buildPartnerLeftMessage, clearChatRuntime, exitChatKeyboard } from "../Utils/chatFlow";
 import { getPaymentAnalytics } from "../Utils/starsPayments";
 
+// Admin session management (24-hour expiry) - module-level for command handler access
+const ADMIN_SESSIONS = new Map<number, number>();
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+function setAdminSession(userId: number): void {
+    ADMIN_SESSIONS.set(userId, Date.now() + SESSION_DURATION_MS);
+}
+
+/**
+ * Clean up expired admin sessions
+ */
+function cleanupExpiredSessions(): void {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [userId, expiry] of ADMIN_SESSIONS) {
+        if (expiry < now) {
+            ADMIN_SESSIONS.delete(userId);
+            cleaned++;
+        }
+    }
+    if (cleaned > 0) {
+        console.log(`[ADMIN_SESSIONS] Cleaned up ${cleaned} expired sessions`);
+    }
+}
+
+/**
+ * Clear all admin sessions (called on bot startup/restart)
+ * This ensures no stale sessions persist across restarts
+ */
+export function clearAllAdminSessions(): void {
+    const count = ADMIN_SESSIONS.size;
+    ADMIN_SESSIONS.clear();
+    if (count > 0) {
+        console.log(`[ADMIN_SESSIONS] Cleared ${count} sessions on startup/restart`);
+    }
+}
+
+/**
+ * Start periodic cleanup of expired admin sessions
+ */
+export function startSessionCleanup(): void {
+    // Clear any stale sessions from previous bot instance on startup
+    clearAllAdminSessions();
+    
+    // Run cleanup every hour
+    setInterval(cleanupExpiredSessions, SESSION_CLEANUP_INTERVAL_MS);
+    console.log("[ADMIN_SESSIONS] Periodic cleanup started");
+}
+
 // Removed local isAdmin/isAdminByUsername - now using shared utility from adminAuth.ts
 
 // Helper function to format duration
@@ -46,6 +96,11 @@ const backKeyboard = Markup.inlineKeyboard([
 // Cancel keyboard for search by ID
 const searchCancelKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("⬅️ Cancel", "ADMIN_SEARCH_BY_ID_CANCEL")]
+]);
+
+// Cancel keyboard for broadcast
+const broadcastCancelKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("❌ Cancel", "ADMIN_BROADCAST_CANCEL")]
 ]);
 
 // Payment Management keyboards
@@ -149,7 +204,13 @@ export default {
             return ctx.reply("🚫 You are not authorized to access the admin panel.");
         }
 
-        await updateUser(userId, { isAdminAuthenticated: true });
+        // Set admin session (24 hours)
+        setAdminSession(userId);
+
+        await updateUser(userId, { 
+            isAdminAuthenticated: true,
+            adminSessionExpiresAt: Date.now() + SESSION_DURATION_MS
+        });
         
         // Check if this is a private chat
         const isPrivateChat = ctx.from.id === ctx.chat?.id;
@@ -195,11 +256,26 @@ export default {
 } as Command;
 
 export function initAdminActions(bot: ExtraTelegraf) {
+    // Use module-level ADMIN_SESSIONS and SESSION_DURATION_MS from line 12-13
+    
     // Helper function to validate admin permissions (using shared utility)
     function validateAdmin(ctx: Context): boolean {
-        return isAdminContext(ctx);
+        const userId = ctx.from?.id;
+        if (!userId) return false;
+        
+        // First check if user is in admin list
+        if (!isAdminContext(ctx)) return false;
+        
+        // Check session expiry (using module-level ADMIN_SESSIONS)
+        const sessionExpiry = ADMIN_SESSIONS.get(userId);
+        if (!sessionExpiry || sessionExpiry < Date.now()) {
+            // Session expired or not set - user needs to run /adminaccess again
+            return false;
+        }
+        
+        return true;
     }
-
+    
     // Safe editMessageText that handles all errors with fallback to reply
     // This prevents UI freeze when message can't be edited (too old, deleted, etc.)
     async function safeEditMessageText(ctx: Context, text: string, extra?: unknown) {
@@ -337,9 +413,9 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // Back to main menu
     bot.action("ADMIN_BACK", async (ctx) => {
-        // Re-validate admin permissions
+        // Re-validate admin permissions with session check
         const adminId = ctx.from?.id;
-        if (!adminId || !isAdmin(adminId)) {
+        if (!validateAdmin(ctx)) {
             await safeAnswerCbQuery(ctx, "Unauthorized");
             return;
         }
@@ -470,7 +546,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await safeAnswerCbQuery(ctx);
         
         const runningChats = bot.runningChats;
-        const activeChatsCount = runningChats.size / 2;
+        const activeChatsCount = Math.floor(runningChats.size / 2);
         
         if (activeChatsCount === 0) {
             await safeEditMessageText(ctx,
@@ -512,7 +588,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     });
 
     // Spectate a specific chat
-    bot.action(/ADMIN_SPECTATE_(\d+)_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_SPECTATE_(\d+)_(\d+)$/, async (ctx) => {
         // Re-validate admin permissions
         if (!validateAdmin(ctx)) {
             await safeAnswerCbQuery(ctx, "Unauthorized");
@@ -574,7 +650,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     });
 
     // Terminate a chat (admin action)
-    bot.action(/ADMIN_TERMINATE_(\d+)_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_TERMINATE_(\d+)_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -665,7 +741,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
             "📢 *Broadcast Message*\n\n" +
             "✍️ Type and send the message you want to broadcast to all users.\n\n" +
             "Use the button below to cancel.",
-            { parse_mode: "Markdown", ...backKeyboard }
+            { parse_mode: "Markdown", ...broadcastCancelKeyboard }
         );
     });
 
@@ -724,7 +800,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await showReportsList(ctx, 0);
     });
 
-    bot.action(/ADMIN_REPORT_USER_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_REPORT_USER_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -734,7 +810,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await showReportUserActions(ctx, userId);
     });
 
-    bot.action(/ADMIN_VIEW_REPORTS_PAGE_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_VIEW_REPORTS_PAGE_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -833,8 +909,15 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
         await safeAnswerCbQuery(ctx);
         if (!ctx.from) return;
+        
+        // Remove admin session
+        ADMIN_SESSIONS.delete(ctx.from.id);
+        
+        // Remove spectator session if exists
+        bot.spectatingChats.delete(ctx.from.id);
+        
         clearAdminInputState(ctx.from.id);
-        await updateUser(ctx.from.id, { isAdminAuthenticated: false });
+        await updateUser(ctx.from.id, { isAdminAuthenticated: false, adminSessionExpiresAt: undefined });
         await safeEditMessageText(ctx,
             "🔐 *Admin Panel*\n\nYou have been logged out.",
             { parse_mode: "Markdown" }
@@ -1695,7 +1778,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     });
 
     // View user details
-    bot.action(/ADMIN_USER_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_USER_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -1706,7 +1789,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     });
 
     // Ban user from details - Also terminates active chats
-    bot.action(/ADMIN_BAN_USER_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_BAN_USER_(\d+)$/, async (ctx) => {
         // Validate admin permissions
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
@@ -1731,7 +1814,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         await showUserDetails(ctx, userId);
     });
 
-    bot.action(/ADMIN_REPORT_BAN_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_REPORT_BAN_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -1943,7 +2026,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     }
 
     // Send warning message to reported user
-    bot.action(/ADMIN_WARN_USER_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_WARN_USER_(\d+)$/, async (ctx) => {
         // Validate admin permissions
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
@@ -1994,7 +2077,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
     });
 
-    bot.action(/ADMIN_REPORT_WARN_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_REPORT_WARN_(\d+)$/, async (ctx) => {
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");
             return;
@@ -2087,7 +2170,7 @@ export function initAdminActions(bot: ExtraTelegraf) {
     }
 
     // Unban user from details
-    bot.action(/ADMIN_UNBAN_USER_(\d+)/, async (ctx) => {
+    bot.action(/^ADMIN_UNBAN_USER_(\d+)$/, async (ctx) => {
         // Validate admin permissions
         if (!validateAdmin(ctx)) {
             await unauthorizedResponse(ctx, "Unauthorized");

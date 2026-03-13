@@ -14,13 +14,33 @@ export function cleanupStaleData(bot: ExtraTelegraf): void {
     const now = Date.now();
     const RATE_LIMIT_CLEANUP_THRESHOLD = 60000; // 1 minute
     
+    // Clean up rate limit map
     for (const [userId, timestamp] of bot.rateLimitMap) {
       if (now - timestamp > RATE_LIMIT_CLEANUP_THRESHOLD) {
         bot.rateLimitMap.delete(userId);
       }
     }
     
-    console.log(`[CLEANUP] - Rate limit map: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length} (Set: ${bot.queueSet.size})`);
+    // Clean up stale spectator sessions (where users are no longer in active chats)
+    // Note: Iterating a Map while deleting is safe in JavaScript - the iterator is not affected
+    // by deletions that occur after the current entry was visited
+    let spectatorCount = 0;
+    for (const [adminId, session] of bot.spectatingChats) {
+      spectatorCount++;
+      // Check if either user is still in an active chat
+      // Note: This captures state at iteration time; a user could theoretically rejoin between
+      // check and delete, but that's acceptable - stale sessions will be cleaned on next run
+      const user1Active = bot.runningChats.has(session.user1);
+      const user2Active = bot.runningChats.has(session.user2);
+      
+      // Remove if neither user is active anymore
+      if (!user1Active && !user2Active) {
+        bot.spectatingChats.delete(adminId);
+        console.log(`[CLEANUP] - Removed stale spectator session for admin ${adminId}`);
+      }
+    }
+    
+    console.log(`[CLEANUP] - Rate limit map: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length} (Set: ${bot.queueSet.size}), Spectating: ${spectatorCount}`);
   } catch (error) {
     console.error("[CLEANUP] - Error during cleanup:", error);
   }
