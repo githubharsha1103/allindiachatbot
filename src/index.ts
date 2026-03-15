@@ -137,12 +137,23 @@ export class ExtraTelegraf extends Telegraf<Context> {
   chatMutex = new Mutex();
   queueMutex = new Mutex();
   matchMutex = new Mutex();
+
+  // Lock state tracking to prevent nested mutex acquisition
+  private chatLockActive = false;
   
   async withChatStateLock<T>(fn: () => Promise<T>): Promise<T> {
+    // Guard against nested lock acquisition
+    if (this.chatLockActive) {
+      console.warn("[LOCK GUARD] Nested chat lock detected — skipping acquire");
+      return fn();
+    }
+
     await this.chatMutex.acquire();
+    this.chatLockActive = true;
     try {
       return await fn();
     } finally {
+      this.chatLockActive = false;
       this.chatMutex.release();
     }
   }
