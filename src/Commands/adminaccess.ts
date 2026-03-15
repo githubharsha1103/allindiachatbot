@@ -430,24 +430,38 @@ export function initAdminActions(bot: ExtraTelegraf) {
 
     // Back to main menu
     bot.action("ADMIN_BACK", async (ctx) => {
-        // Re-validate admin permissions with session check
         const adminId = ctx.from?.id;
+
         if (!validateAdmin(ctx)) {
             await safeAnswerCbQuery(ctx, "Unauthorized");
             return;
         }
-        
-        console.log("[ADMIN] - ADMIN_BACK action triggered for user:", ctx.from?.id);
+
         try {
             clearAdminInputState(adminId);
             await safeAnswerCbQuery(ctx);
-            console.log("[ADMIN] - Answered callback query");
-            await safeEditMessageText(
-                ctx,
-                "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
-                { parse_mode: "Markdown", ...mainKeyboard }
-            );
-            console.log("[ADMIN] - Edited message");
+
+            // Clear previous keyboard to avoid Telegram UI conflicts
+            try {
+                await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+            } catch {
+                // Ignore errors when clearing reply markup
+            }
+
+            // Try to edit the message, fall back to reply if it fails
+            try {
+                await safeEditMessageText(
+                    ctx,
+                    "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
+                    { parse_mode: "Markdown", ...mainKeyboard }
+                );
+            } catch {
+                // Fallback if Telegram refuses to edit the message
+                await ctx.reply(
+                    "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
+                    { parse_mode: "Markdown", ...mainKeyboard }
+                );
+            }
         } catch (err) {
             console.error("[ADMIN] - Error in ADMIN_BACK:", err);
         }
