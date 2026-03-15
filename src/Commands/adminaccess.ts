@@ -428,42 +428,30 @@ export function initAdminActions(bot: ExtraTelegraf) {
         );
     }
 
-    // Back to main menu
+    // Back to main menu - uses centralized admin navigation
     bot.action("ADMIN_BACK", async (ctx) => {
-        const adminId = ctx.from?.id;
-
-        if (!validateAdmin(ctx)) {
-            await safeAnswerCbQuery(ctx, "Unauthorized");
-            return;
-        }
-
         try {
-            clearAdminInputState(adminId);
-            await safeAnswerCbQuery(ctx);
+            await ctx.answerCbQuery();
 
-            // Clear previous keyboard to avoid Telegram UI conflicts
+            // Try to delete the previous message to clean up
             try {
-                await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+                if (ctx.callbackQuery?.message) {
+                    await ctx.deleteMessage();
+                }
             } catch {
-                // Ignore errors when clearing reply markup
+                // Ignore if message can't be deleted
             }
 
-            // Try to edit the message, fall back to reply if it fails
+            // Render the main admin menu using centralized function
+            const { renderAdminMenu } = await import("../Utils/adminNavigation");
+            await renderAdminMenu(ctx);
+        } catch (error) {
+            console.error("[ADMIN_NAV] Failed to return to admin menu:", error);
             try {
-                await safeEditMessageText(
-                    ctx,
-                    "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
-                    { parse_mode: "Markdown", ...mainKeyboard }
-                );
+                await ctx.answerCbQuery("Error returning to menu");
             } catch {
-                // Fallback if Telegram refuses to edit the message
-                await ctx.reply(
-                    "🔐 *Admin Panel*\n\nWelcome, Admin!\n\nSelect an option below:",
-                    { parse_mode: "Markdown", ...mainKeyboard }
-                );
+                // Ignore
             }
-        } catch (err) {
-            console.error("[ADMIN] - Error in ADMIN_BACK:", err);
         }
     });
 
