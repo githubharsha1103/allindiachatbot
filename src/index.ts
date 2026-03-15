@@ -138,22 +138,43 @@ export class ExtraTelegraf extends Telegraf<Context> {
   queueMutex = new Mutex();
   matchMutex = new Mutex();
 
-  // Lock state tracking to prevent nested mutex acquisition
-  private chatLockActive = false;
-  
+  // Re-entrant mutex tracking for safe nested locking
+  // Allows the same execution flow to acquire the lock multiple times
+  // depth tracks how many times the lock is held; owner tracks who's holding it
+  private chatLockOwner: number | null = null;
+  private chatLockDepth = 0;
+
   async withChatStateLock<T>(fn: () => Promise<T>): Promise<T> {
-    // Guard against nested lock acquisition
-    if (this.chatLockActive) {
-      console.warn("[LOCK GUARD] Nested chat lock detected — skipping acquire");
-      return fn();
+    // Re-entrant: if we already hold the lock, just increment depth and proceed
+    if (this.chatLockDepth > 0) {
+      this.chatLockDepth++;
+      console.log(`[LOCK] Re-entrant lock acquired (depth: ${this.chatLockDepth})`);
+      try {
+        return await fn();
+      } finally {
+        this.chatLockDepth--;
+        if (this.chatLockDepth === 0) {
+          this.chatLockOwner = null;
+        }
+      }
     }
 
+    // Not currently locked - acquire mutex
     await this.chatMutex.acquire();
-    this.chatLockActive = true;
+    this.chatLockOwner = Date.now();
+    this.chatLockDepth = 1;
+    console.log(`[LOCK] Acquired chat mutex (depth: 1)`);
+    
     try {
       return await fn();
     } finally {
-      this.chatLockActive = false;
+      this.chatLockDepth--;
+      if (this.chatLockDepth === 0) {
+        this.chatLockOwner = null;
+        console.log(`[LOCK] Released chat mutex`);
+      } else {
+        console.log(`[LOCK] Re-entrant lock released (depth after: ${this.chatLockDepth})`);
+      }
       this.chatMutex.release();
     }
   }
