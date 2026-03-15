@@ -97,7 +97,8 @@ function formatDate(timestamp: number): string {
 
 export function isPremium(user: Pick<User, "premium" | "premiumExpires" | "premiumExpiry">): boolean {
   const expiry = user.premiumExpires || user.premiumExpiry || 0;
-  return !!user.premium && expiry > Date.now();
+  // Use >= to ensure users whose expiry is exactly now are still considered premium
+  return !!user.premium && expiry >= Date.now();
 }
 
 export async function showPremiumPurchaseMenu(ctx: Context): Promise<void> {

@@ -69,26 +69,37 @@ export function buildSelfSkippedMessage(): string {
 }
 
 export async function clearChatRuntime(bot: ExtraTelegraf, userId: number, partnerId: number | null): Promise<void> {
-    const ids = [userId, partnerId].filter((value): value is number => typeof value === "number");
+    // Use mutex to prevent race conditions when clearing chat runtime
+    await bot.withChatStateLock(async () => {
+        const ids = [userId, partnerId].filter((value): value is number => typeof value === "number");
 
-    for (const id of ids) {
-        bot.runningChats.delete(id);
-        bot.messageMap.delete(id);
-        bot.messageCountMap.delete(id);
-        bot.rateLimitMap.delete(id);
-        await bot.removeFromQueue(id);
-    }
+        for (const id of ids) {
+            bot.runningChats.delete(id);
+            bot.messageMap.delete(id);
+            bot.messageCountMap.delete(id);
+            bot.rateLimitMap.delete(id);
+            await bot.removeFromQueue(id);
+        }
 
-    // Clean up spectator sessions for these users
-    for (const [sessionKey, spectators] of bot.spectatingChats) {
-        const [u1, u2] = sessionKey.split('_').map(Number);
-        if (ids.includes(u1) || ids.includes(u2)) {
-            // Remove all spectators for this session
-            for (const adminId of spectators) {
-                bot.removeSpectator(adminId);
+        // Collect session keys to remove (can't modify Map while iterating)
+        const sessionsToCleanup: string[] = [];
+        for (const [sessionKey] of bot.spectatingChats) {
+            const [u1, u2] = sessionKey.split('_').map(Number);
+            if (ids.includes(u1) || ids.includes(u2)) {
+                sessionsToCleanup.push(sessionKey);
             }
         }
-    }
+
+        // Remove spectator sessions for these users
+        for (const sessionKey of sessionsToCleanup) {
+            const spectators = bot.spectatingChats.get(sessionKey);
+            if (spectators) {
+                for (const adminId of spectators) {
+                    bot.removeSpectator(adminId);
+                }
+            }
+        }
+    });
 }
 
 export async function beginChatRuntime(bot: ExtraTelegraf, userId: number, partnerId: number): Promise<void> {

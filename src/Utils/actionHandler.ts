@@ -26,7 +26,12 @@ export interface Action {
 
 export async function loadActions() {
     try {
-        const commandsDir = path.join(process.cwd(), "dist/Commands");
+        // Check dist/Commands first (for production), then src/Commands (for development)
+        let commandsDir = path.join(process.cwd(), "dist/Commands");
+        if (!fs.existsSync(commandsDir)) {
+            commandsDir = path.join(process.cwd(), "src/Commands");
+        }
+        
         const Files: string[] = [];
         
         // Recursively get all .js files in Commands directory
@@ -37,7 +42,7 @@ export async function loadActions() {
                 const fullPath = path.join(dir, entry.name);
                 if (entry.isDirectory()) {
                     getAllFiles(fullPath);
-                } else if (entry.isFile() && entry.name.endsWith('.js')) {
+                } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts'))) {
                     Files.push(fullPath);
                 }
             }
@@ -78,11 +83,17 @@ export async function loadActions() {
     }
 }
 
-const premiumMessage =
-"*Premium Feature*\n\n" +
-"This feature is available only for Premium users.\n\n" +
-"Use /premium to buy with Telegram Stars\n" +
-"Or use /settings -> Referrals to earn free Premium.";
+const premiumPreferenceMessage =
+"*Gender Preference - Premium Feature*\n\n" +
+"Setting gender preference is available only for Premium users.\n\n" +
+"✨ *Premium Features:*\n" +
+"• Set gender preference (Male/Female)\n" +
+"• See partner's gender\n" +
+"• Better matching control\n" +
+"• Block list access\n\n" +
+"💎 Buy Premium: /premium\n" +
+"🎁 Or earn free Premium via /settings -> Referrals!\n\n" +
+"💳 *Payment Issues?* Contact @demonhunter1511";
 
 const premiumBlockMessage =
 "*Premium Feature*\n\n" +
@@ -602,7 +613,8 @@ bot.action("SET_PREFERENCE", async (ctx) => {
             "• Better profile control\n" +
             "• And more!\n\n" +
             "📞 Contact admin @demonhunter1511 to purchase\n" +
-            "🎁 Or use /settings → Referrals to earn free Premium!",
+            "🎁 Or use /settings → Referrals to earn free Premium!\n\n" +
+            "💳 *Payment Issues?* Contact @demonhunter1511",
             { parse_mode: "Markdown" }
         );
     }
@@ -619,7 +631,7 @@ bot.action("PREF_MALE", async (ctx) => {
     // Use isPremium to check both premium flag AND expiry
     if (!isPremium(user)) {
         await safeAnswerCbQuery(ctx);
-        return ctx.reply(premiumMessage, { parse_mode: "Markdown" });
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
     await safeAnswerCbQuery(ctx, "Preference saved: Male ✅");
@@ -634,7 +646,7 @@ bot.action("PREF_ANY", async (ctx) => {
     // Use isPremium to check both premium flag AND expiry
     if (!isPremium(user)) {
         await safeAnswerCbQuery(ctx);
-        return ctx.reply(premiumMessage, { parse_mode: "Markdown" });
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
     await safeAnswerCbQuery(ctx, "Preference saved: Any ✅");
@@ -649,7 +661,7 @@ bot.action("PREF_FEMALE", async (ctx) => {
     // Use isPremium to check both premium flag AND expiry
     if (!isPremium(user)) {
         await safeAnswerCbQuery(ctx);
-        return ctx.reply(premiumMessage, { parse_mode: "Markdown" });
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
     await safeAnswerCbQuery(ctx, "Preference saved: Female ✅");

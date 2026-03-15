@@ -9,7 +9,7 @@ import {
   clearChatRuntime,
   exitChatKeyboard
 } from "../Utils/chatFlow";
-import { cleanupBlockedUser, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
+import { cleanupBlockedUser, cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
 
 interface WaitingUser {
@@ -106,7 +106,14 @@ export default {
           if (!added) {
             return ctx.reply("⚠️ You are already in the queue!");
           }
-          return ctx.reply("⏳ Waiting for a partner...");
+          // Handle case where user has blocked the bot
+          try {
+            return await ctx.reply("⏳ Waiting for a partner...");
+          } catch {
+            // User blocked the bot - remove from queue and notify
+            await cleanupBlockedUserAsync(bot, userId);
+            return ctx.reply("⚠️ Unable to send message. You may have blocked the bot.");
+          }
         }
 
         const match = bot.waitingQueue[matchIndex] as WaitingUser;

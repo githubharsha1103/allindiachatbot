@@ -2,7 +2,7 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { areUsersMutuallyBlocked, getUser, updateUser } from "../storage/db";
 import { beginChatRuntime, buildPartnerMatchMessage } from "../Utils/chatFlow";
-import { endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
+import { cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
 import { getSetupRequiredPrompt } from "../Utils/setupFlow";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
 
@@ -109,7 +109,14 @@ export default {
           if (!added) {
             return ctx.reply("⚠️ You are already in the queue!");
           }
-          return ctx.reply("⏳ Waiting for a partner...");
+          // Handle case where user has blocked the bot
+          try {
+            return await ctx.reply("⏳ Waiting for a partner...");
+          } catch {
+            // User blocked the bot - remove from queue and notify
+            await cleanupBlockedUserAsync(bot, userId);
+            return ctx.reply("⚠️ Unable to send message. You may have blocked the bot.");
+          }
         }
 
         const match = bot.waitingQueue[matchIndex] as WaitingUser;

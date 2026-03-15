@@ -33,7 +33,11 @@ describe("chatFlow", () => {
       messageMap: new Map([[1, {}], [2, {}]]),
       messageCountMap: new Map([[1, 3], [2, 4]]),
       rateLimitMap: new Map([[1, 1], [2, 2]]),
-      spectatingChats: new Map([["1_2", [99]]]),
+      spectatingChats: new Map([["1_2", new Set([99])]]),
+      // Mock withChatStateLock to execute synchronously for tests
+      withChatStateLock: async <T>(fn: () => Promise<T>): Promise<T> => {
+        return fn();
+      },
       removeFromQueue(userId: number) {
         const idx = this.waitingQueue.findIndex((entry: { id: number }) => entry.id === userId);
         if (idx !== -1) {
@@ -44,7 +48,10 @@ describe("chatFlow", () => {
         return false;
       },
       removeSpectator(adminId: number) {
-        // Mock implementation
+        // Mock implementation - remove from all sessions
+        for (const [key, spectators] of this.spectatingChats) {
+          spectators.delete(adminId);
+        }
       }
     };
 
