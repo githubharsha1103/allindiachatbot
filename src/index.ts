@@ -818,8 +818,10 @@ registerAdminCommands(bot);
 
 /* ---------------- ADMIN MODULES ---------------- */
 import { registerAdminCallbacks } from "./admin/index";
+import { registerSpectateCallbacks } from "./admin/spectateChats";
 import { loadModerationSettings } from "./admin/moderationSettings";
 registerAdminCallbacks(bot);
+registerSpectateCallbacks(bot);
 loadModerationSettings().catch(err => console.error("[INIT] Failed to load moderation settings:", err));
 
 /* ---------------- ADMIN CHECK ---------------- */
