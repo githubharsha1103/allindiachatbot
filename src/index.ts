@@ -17,8 +17,14 @@ import 'dotenv/config';
 import { Context, Telegraf } from "telegraf";
 import { AsyncLocalStorage } from "async_hooks";
 
-// AsyncLocalStorage for tracking async execution context (for re-entrant mutex)
-const chatLockStorage = new AsyncLocalStorage<symbol>();
+// Lock context interface for re-entrant mutex
+interface ChatLockContext {
+  token: symbol;
+  depth: number;
+}
+
+// AsyncLocalStorage for tracking async execution context with depth
+const chatLockStorage = new AsyncLocalStorage<ChatLockContext>();
 
 // ==================== ENVIRONMENT VALIDATION ====================
 import { validateEnvironment, isProduction } from './Utils/envValidator';
@@ -142,44 +148,38 @@ export class ExtraTelegraf extends Telegraf<Context> {
   queueMutex = new Mutex();
   matchMutex = new Mutex();
 
-  // Re-entrant mutex using AsyncLocalStorage for proper async context tracking
-  // This ensures only the same async execution flow can bypass the mutex
-  private chatLockDepth = 0;
-
+  // Re-entrant mutex using AsyncLocalStorage with context-based depth tracking
+  // Depth is stored per async execution flow, not globally
+  
   async withChatStateLock<T>(fn: () => Promise<T>): Promise<T> {
-    // Check if we're already in an async context that owns the lock
-    const existingOwner = chatLockStorage.getStore();
+    const context = chatLockStorage.getStore();
     
-    if (existingOwner !== undefined) {
-      // We're in the same async execution flow - just increment depth and run
-      this.chatLockDepth++;
-      console.log(`[LOCK] Re-entrant lock acquired (depth: ${this.chatLockDepth})`);
+    if (context) {
+      // Nested call in same async flow - increment depth
+      context.depth++;
+      console.log(`[LOCK] nested lock detected (depth: ${context.depth})`);
       try {
         return await fn();
       } finally {
-        this.chatLockDepth--;
-        if (this.chatLockDepth === 0) {
-          console.log(`[LOCK] Re-entrant lock released (depth: 0)`);
-        }
+        context.depth--;
       }
     }
 
-    // Not in our async context - acquire mutex and create new context
+    // First call — acquire mutex
+    console.log("[LOCK] acquiring chat lock");
     await this.chatMutex.acquire();
-    const lockToken = Symbol("chatLock");
-    this.chatLockDepth = 1;
-    console.log(`[LOCK] Acquired chat mutex (depth: 1)`);
-    
+
+    const newContext: ChatLockContext = {
+      token: Symbol("chatLock"),
+      depth: 1
+    };
+
     try {
-      // Run in new async context so nested calls detect ownership
-      return await chatLockStorage.run(lockToken, async () => {
+      return await chatLockStorage.run(newContext, async () => {
         return await fn();
       });
     } finally {
-      this.chatLockDepth--;
-      if (this.chatLockDepth === 0) {
-        console.log(`[LOCK] Released chat mutex`);
-      }
+      console.log("[LOCK] releasing chat lock");
       this.chatMutex.release();
     }
   }
