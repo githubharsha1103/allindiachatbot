@@ -25,7 +25,7 @@ describe("chatFlow", () => {
     expect(message).toContain("Gender: 🔒 Hidden");
   });
 
-  it("clears queue and chat runtime consistently", () => {
+  it("clears queue and chat runtime consistently", async () => {
     const bot: any = {
       waitingQueue: [{ id: 1 }, { id: 2 }, { id: 3 }],
       queueSet: new Set([1, 2, 3]),
@@ -50,7 +50,7 @@ describe("chatFlow", () => {
     expect(bot.messageCountMap.get(1)).toBe(0);
     expect(bot.queueSet.has(1)).toBe(false);
 
-    clearChatRuntime(bot, 1, 2);
+    await clearChatRuntime(bot, 1, 2);
     expect(bot.runningChats.has(1)).toBe(false);
     expect(bot.runningChats.has(2)).toBe(false);
     expect(bot.messageMap.size).toBe(0);
