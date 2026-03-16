@@ -12,6 +12,7 @@ import referralCommand from "../Commands/referral";
 import endCommand from "../Commands/end";
 import { getSetupCompleteText } from "./setupFlow";
 import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
+import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
 
 // Because it doesn't know that ctx has a match property. by default, Context<Update> doesn't include match, but telegraf adds it dynamically when using regex triggers.
 export interface ActionContext extends Context {
@@ -876,19 +877,82 @@ bot.action("REPORT_CONFIRM", async (ctx) => {
         reportedUsers: [...(user.reportedUsers || []), partnerId]
     });
 
-    // Auto warn user exactly when they reach 2 reports.
-    if (newReportCount === 2) {
-        const warningText =
-            `⚠️ *Warning*\n\n` +
-            `You were reported for: *${reportReason}*\n\n` +
-            `${getAutoWarningMessage(reportReason)}\n\n` +
-            `You have received 2 reports. If this continues, you may be banned.\n\n` +
-            `Please chat safely and respect others.`;
+    // Auto warn/temp-ban/ban based on configured thresholds
+    if (isModerationEnabled()) {
+        const warnThreshold = getAutoWarnThreshold();
+        const tempBanThreshold = getAutoTempBanThreshold();
+        const banThreshold = getAutoBanThreshold();
+        const tempBanDurationMs = getTempBanDurationMs();
+        
+        // Defensive: ensure thresholds are in valid order to prevent conflicting auto-actions
+        if (!(warnThreshold < tempBanThreshold && tempBanThreshold < banThreshold)) {
+            console.error(
+                `[AUTO_MODERATION] Invalid threshold configuration: warn=${warnThreshold}, tempBan=${tempBanThreshold}, ban=${banThreshold}. Skipping auto-actions.`
+            );
+        } else {
+            // Auto warn when reaching warn threshold
+            if (newReportCount === warnThreshold) {
+                const warningText =
+                    `⚠️ *Warning*\n\n` +
+                    `You were reported for: *${reportReason}*\n\n` +
+                    `${getAutoWarningMessage(reportReason)}\n\n` +
+                    `You have received ${warnThreshold} reports. If this continues, you may be banned.\n\n` +
+                    `Please chat safely and respect others.`;
 
-        try {
-            await ctx.telegram.sendMessage(partnerId, warningText, { parse_mode: "Markdown" });
-        } catch (error) {
-            console.error(`[AUTO_WARN] Failed to send warning to user ${partnerId}:`, error);
+                try {
+                    await ctx.telegram.sendMessage(partnerId, warningText, { parse_mode: "Markdown" });
+                } catch (error) {
+                    console.error(`[AUTO_WARN] Failed to send warning to user ${partnerId}:`, error);
+                }
+            }
+            
+            // Auto temp-ban when reaching temp-ban threshold
+            if (newReportCount === tempBanThreshold) {
+                try {
+                    // Add user to temp ban
+                    await blockUserForUser(partnerId, tempBanDurationMs);
+                    const hours = Math.round(tempBanDurationMs / (1000 * 60 * 60));
+                    await ctx.telegram.sendMessage(
+                        partnerId,
+                        `⏱️ *Temporary Ban*\n\nYou have been temporarily banned for ${hours} hours due to ${tempBanThreshold} reports.\n\nThis is an automatic action based on community reports.`,
+                        { parse_mode: "Markdown" }
+                    );
+                    console.log(`[AUTO_MODERATION] User ${partnerId} auto temp-banned for ${hours} hours`);
+                } catch (error) {
+                    console.error(`[AUTO_MODERATION] Failed to temp-ban user ${partnerId}:`, error);
+                }
+            }
+            
+            // Auto ban when reaching ban threshold
+            if (newReportCount === banThreshold) {
+                try {
+                    await banUser(partnerId, `Auto-banned for reaching ${banThreshold} reports`);
+                    await ctx.telegram.sendMessage(
+                        partnerId,
+                        `🚫 *Banned*\n\nYou have been banned due to accumulating ${banThreshold} reports.\n\nThis is an automatic action based on community reports.`,
+                        { parse_mode: "Markdown" }
+                    );
+                    console.log(`[AUTO_MODERATION] User ${partnerId} auto-banned for reaching ${banThreshold} reports`);
+                } catch (error) {
+                    console.error(`[AUTO_MODERATION] Failed to ban user ${partnerId}:`, error);
+                }
+            }
+        }
+    } else {
+        // Fallback: auto warn at 2 reports when moderation is disabled (legacy behavior)
+        if (newReportCount === 2) {
+            const warningText =
+                `⚠️ *Warning*\n\n` +
+                `You were reported for: *${reportReason}*\n\n` +
+                `${getAutoWarningMessage(reportReason)}\n\n` +
+                `You have received 2 reports. If this continues, you may be banned.\n\n` +
+                `Please chat safely and respect others.`;
+
+            try {
+                await ctx.telegram.sendMessage(partnerId, warningText, { parse_mode: "Markdown" });
+            } catch (error) {
+                console.error(`[AUTO_WARN] Failed to send warning to user ${partnerId}:`, error);
+            }
         }
     }
     

@@ -2500,73 +2500,9 @@ export async function saveSettings<T>(type: string, data: T): Promise<void> {
   }
 }
 
-// ==================== Admin Log Persistence ====================
-
-interface AdminLogEntry {
-  _id?: string;
-  adminId: number;
-  action: string;
-  targetUserId?: number;
-  details?: Record<string, unknown>;
-  timestamp: number;
-}
+// ==================== End of Settings Functions ====================
 
 /**
- * Save admin log entry to database
+ * @deprecated This function is no longer used - admin audit logs feature has been removed
  */
-export async function saveAdminLog(log: AdminLogEntry): Promise<void> {
-  if (useMongoDB && !isFallbackMode && db) {
-    try {
-      const collection = db.collection<AdminLogEntry>("admin_logs");
-      await collection.insertOne(log);
-      
-      // Cleanup old logs (keep last 30 days)
-      const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-      await collection.deleteMany({ timestamp: { $lt: cutoff } });
-    } catch (error) {
-      console.error("[ADMIN_LOGS] Error saving log:", error);
-    }
-  }
-}
-
-/**
- * Get admin logs from database with optional filters
- */
-export async function getAdminLogs(
-  filters: {
-    adminId?: number;
-    action?: string;
-    targetUserId?: number;
-    startDate?: number;
-    endDate?: number;
-  },
-  limit: number = 100
-): Promise<AdminLogEntry[]> {
-  if (useMongoDB && !isFallbackMode && db) {
-    try {
-      const collection = db.collection<AdminLogEntry>("admin_logs");
-      const query: Record<string, unknown> = {};
-      
-      if (filters.adminId) query.adminId = filters.adminId;
-      if (filters.action) query.action = filters.action;
-      if (filters.targetUserId) query.targetUserId = filters.targetUserId;
-      if (filters.startDate || filters.endDate) {
-        query.timestamp = {};
-        if (filters.startDate) (query.timestamp as Record<string, number>).$gte = filters.startDate;
-        if (filters.endDate) (query.timestamp as Record<string, number>).$lte = filters.endDate;
-      }
-      
-      const results = await collection
-        .find(query)
-        .sort({ timestamp: -1 })
-        .limit(limit)
-        .toArray();
-      
-      return results;
-    } catch (error) {
-      console.error("[ADMIN_LOGS] Error getting logs:", error);
-    }
-  }
-  return [];
-}
 

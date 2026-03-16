@@ -374,6 +374,18 @@ export class ExtraTelegraf extends Telegraf<Context> {
     try {
       // O(1) check using Set - much faster than array.some()
       if (this.runningChats.has(user.id)) return false;
+      
+      // Route premium users to premium queue
+      if (user.isPremium) {
+        if (this.premiumQueueSet.has(user.id)) return false;
+        if (this.premiumQueue.length >= this.MAX_PREMIUM_QUEUE_SIZE) return false;
+        
+        this.premiumQueue.push(user);
+        this.premiumQueueSet.add(user.id); // O(1) insertion
+        return true;
+      }
+      
+      // Regular users go to waiting queue
       if (this.queueSet.has(user.id)) return false;
       if (this.isQueueFull()) return false;
       
@@ -855,10 +867,8 @@ registerAdminCommands(bot);
 
 /* ---------------- ADMIN MODULES ---------------- */
 import { registerAdminCallbacks } from "./admin/index";
-import { registerSpectateCallbacks } from "./admin/spectateChats";
 import { loadModerationSettings } from "./admin/moderationSettings";
 registerAdminCallbacks(bot);
-registerSpectateCallbacks(bot);
 loadModerationSettings().catch(err => console.error("[INIT] Failed to load moderation settings:", err));
 
 /* ---------------- ADMIN CHECK ---------------- */

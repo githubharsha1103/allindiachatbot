@@ -183,7 +183,7 @@ const backKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("7 Days", "ADMIN_REVENUE_PERIOD_7")],
     [Markup.button.callback("30 Days", "ADMIN_REVENUE_PERIOD_30")],
     [Markup.button.callback("90 Days", "ADMIN_REVENUE_PERIOD_90")],
-    [Markup.button.callback("🔙 Back to Menu", "ADMIN_BACK")]
+    [Markup.button.callback("🔙 Back to Payments", "ADMIN_PAYMENTS")]
 ]);
 
 /**

@@ -100,10 +100,7 @@ const mainKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("💰 Manage Payments", "ADMIN_PAYMENTS")],
     [Markup.button.callback("📊 Health Dashboard", "ADMIN_HEALTH_DASHBOARD")],
     [Markup.button.callback("📥 Queue Monitor", "ADMIN_QUEUE_MONITOR")],
-    [Markup.button.callback("💰 Revenue Analytics", "ADMIN_REVENUE_DASHBOARD")],
-    [Markup.button.callback("📜 Admin Audit Logs", "ADMIN_AUDIT_LOGS")],
-    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")],
-    [Markup.button.callback("👁 Spectate Chats", "ADMIN_SPECTATE_CHATS")]
+    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")]
 ]);
 
 const backKeyboard = Markup.inlineKeyboard([
@@ -124,7 +121,7 @@ const broadcastCancelKeyboard = Markup.inlineKeyboard([
 const paymentManagementKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("👑 Premium Users", "ADMIN_PREMIUM_USERS")],
     [Markup.button.callback("💳 Payment Orders", "ADMIN_PAYMENT_ORDERS")],
-    [Markup.button.callback("📊 Payment Analytics", "ADMIN_PAYMENT_ANALYTICS")],
+    [Markup.button.callback("📊 Revenue Analytics", "ADMIN_REVENUE_DASHBOARD")],
     [Markup.button.callback("⏳ Expiring Soon", "ADMIN_PREMIUM_EXPIRING")],
     [Markup.button.callback("⬅️ Back", "ADMIN_BACK")]
 ]);

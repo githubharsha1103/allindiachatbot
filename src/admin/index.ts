@@ -8,7 +8,6 @@
  * - dashboard.ts - Bot health monitoring
  * - queueMonitor.ts - Matchmaking queue viewer
  * - revenueAnalytics.ts - Payment analytics
- * - adminLogs.ts - Audit logging
  * - moderationSettings.ts - Auto-moderation configuration
  */
 
@@ -21,11 +20,9 @@ import { safeAnswerCbQuery, getErrorMessage } from "../Utils/telegramUi";
 export * from "./dashboard";
 export * from "./queueMonitor";
 export * from "./revenueAnalytics";
-export * from "./adminLogs";
 export * from "./moderationSettings";
 
 // Re-export types for convenience
-export type { AdminAction, AdminLog, AdminLogFilter } from "./adminLogs";
 export type { ModerationSettings } from "./moderationSettings";
 export type { QueueStats, QueueUser, QueueDetails } from "./queueMonitor";
 export type { RevenueAnalytics, RevenueTrend } from "./revenueAnalytics";
@@ -90,6 +87,48 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
         }
     });
     
+    // Queue connect callback - connect admin with queued user
+    bot.action(/^ADMIN_QUEUE_CONNECT_(\d+)$/, async (ctx: Context) => {
+        try {
+            const match = (ctx.callbackQuery as unknown as { match?: RegExpMatchArray })?.match;
+            if (!match) return;
+            const userId = parseInt(match[1], 10);
+            
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            
+            await safeAnswerCbQuery(ctx);
+            const { handleQueueConnect } = await import("./queueMonitor");
+            await handleQueueConnect(ctx, bot, userId);
+        } catch (error) {
+            console.error("[admin] ADMIN_QUEUE_CONNECT error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error connecting to user");
+        }
+    });
+    
+    // Queue connect confirmation callback
+    bot.action(/^ADMIN_QUEUE_CONNECT_CONFIRM_(\d+)$/, async (ctx: Context) => {
+        try {
+            const match = (ctx.callbackQuery as unknown as { match?: RegExpMatchArray })?.match;
+            if (!match) return;
+            const userId = parseInt(match[1], 10);
+            
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            
+            await safeAnswerCbQuery(ctx);
+            const { handleQueueConnectConfirm } = await import("./queueMonitor");
+            await handleQueueConnectConfirm(ctx, bot, userId);
+        } catch (error) {
+            console.error("[admin] ADMIN_QUEUE_CONNECT_CONFIRM error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error connecting to user");
+        }
+    });
+    
     // Revenue Analytics callbacks
     bot.action("ADMIN_REVENUE_DASHBOARD", async (ctx: Context) => {
         try {
@@ -121,40 +160,6 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
         } catch (error) {
             console.error("[admin] ADMIN_REVENUE_PERIOD error:", getErrorMessage(error));
             await safeAnswerCbQuery(ctx, "Error loading revenue");
-        }
-    });
-    
-    // Audit Logs callbacks
-    bot.action("ADMIN_AUDIT_LOGS", async (ctx: Context) => {
-        try {
-            if (!isAdminContext(ctx)) {
-                await unauthorizedResponse(ctx, "Unauthorized");
-                return;
-            }
-            const { showAdminLogs } = await import("./adminLogs");
-            await showAdminLogs(ctx, 0);
-        } catch (error) {
-            console.error("[admin] ADMIN_AUDIT_LOGS error:", getErrorMessage(error));
-            await safeAnswerCbQuery(ctx, "Error loading logs");
-        }
-    });
-    
-    // Audit logs pagination
-    bot.action(/^ADMIN_AUDIT_LOGS_PAGE_(\d+)$/, async (ctx: Context) => {
-        try {
-            if (!isAdminContext(ctx)) {
-                await unauthorizedResponse(ctx, "Unauthorized");
-                return;
-            }
-            const match = (ctx.callbackQuery as unknown as { match?: RegExpMatchArray })?.match;
-            if (!match) return;
-            const page = parseInt(match[1], 10);
-            
-            const { handleAdminLogsPage } = await import("./adminLogs");
-            await handleAdminLogsPage(ctx, page);
-        } catch (error) {
-            console.error("[admin] ADMIN_AUDIT_LOGS_PAGE error:", getErrorMessage(error));
-            await safeAnswerCbQuery(ctx, "Error loading logs");
         }
     });
     
@@ -200,6 +205,66 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
         } catch (error) {
             console.error("[admin] ADMIN_MODERATION_RESET error:", getErrorMessage(error));
             await safeAnswerCbQuery(ctx, "Error resetting settings");
+        }
+    });
+    
+    // Edit Warn Threshold
+    bot.action("ADMIN_MODERATION_EDIT_WARN", async (ctx: Context) => {
+        try {
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            const { handleEditWarnThreshold } = await import("./moderationSettings");
+            await handleEditWarnThreshold(ctx);
+        } catch (error) {
+            console.error("[admin] ADMIN_MODERATION_EDIT_WARN error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error loading editor");
+        }
+    });
+    
+    // Edit Temp Ban Threshold
+    bot.action("ADMIN_MODERATION_EDIT_TEMPBAN", async (ctx: Context) => {
+        try {
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            const { handleEditTempBanThreshold } = await import("./moderationSettings");
+            await handleEditTempBanThreshold(ctx);
+        } catch (error) {
+            console.error("[admin] ADMIN_MODERATION_EDIT_TEMPBAN error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error loading editor");
+        }
+    });
+    
+    // Edit Ban Threshold
+    bot.action("ADMIN_MODERATION_EDIT_BAN", async (ctx: Context) => {
+        try {
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            const { handleEditBanThreshold } = await import("./moderationSettings");
+            await handleEditBanThreshold(ctx);
+        } catch (error) {
+            console.error("[admin] ADMIN_MODERATION_EDIT_BAN error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error loading editor");
+        }
+    });
+    
+    // Edit Duration
+    bot.action("ADMIN_MODERATION_EDIT_DURATION", async (ctx: Context) => {
+        try {
+            if (!isAdminContext(ctx)) {
+                await unauthorizedResponse(ctx, "Unauthorized");
+                return;
+            }
+            const { handleEditDuration } = await import("./moderationSettings");
+            await handleEditDuration(ctx);
+        } catch (error) {
+            console.error("[admin] ADMIN_MODERATION_EDIT_DURATION error:", getErrorMessage(error));
+            await safeAnswerCbQuery(ctx, "Error loading editor");
         }
     });
     

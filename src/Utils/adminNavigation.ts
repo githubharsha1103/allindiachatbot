@@ -17,10 +17,7 @@ const mainKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("💰 Manage Payments", "ADMIN_PAYMENTS")],
     [Markup.button.callback("📊 Health Dashboard", "ADMIN_HEALTH_DASHBOARD")],
     [Markup.button.callback("📥 Queue Monitor", "ADMIN_QUEUE_MONITOR")],
-    [Markup.button.callback("💰 Revenue Analytics", "ADMIN_REVENUE_DASHBOARD")],
-    [Markup.button.callback("📜 Admin Audit Logs", "ADMIN_AUDIT_LOGS")],
-    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")],
-    [Markup.button.callback("👁 Spectate Chats", "ADMIN_SPECTATE_CHATS")]
+    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")]
 ]);
 
 /**
