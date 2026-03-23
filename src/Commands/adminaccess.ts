@@ -120,6 +120,7 @@ const broadcastCancelKeyboard = Markup.inlineKeyboard([
 // Payment Management keyboards
 const paymentManagementKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("👑 Premium Users", "ADMIN_PREMIUM_USERS")],
+    [Markup.button.callback("✅ Completed Payments", "ADMIN_COMPLETED_PAYMENTS")],
     [Markup.button.callback("💳 Payment Orders", "ADMIN_PAYMENT_ORDERS")],
     [Markup.button.callback("📊 Revenue Analytics", "ADMIN_REVENUE_DASHBOARD")],
     [Markup.button.callback("⏳ Expiring Soon", "ADMIN_PREMIUM_EXPIRING")],
@@ -656,6 +657,27 @@ export function initAdminActions(bot: ExtraTelegraf) {
         const user2Messages = bot.messageCountMap.get(user2) || 0;
         const totalMessages = user1Messages + user2Messages;
         
+        // Helper function to get user display name (from DB or Telegram)
+        const getUserDisplayName = async (userId: number, dbName: string | null): Promise<string> => {
+            // Use DB name first
+            if (dbName && dbName !== "Unknown" && dbName !== "Not set") {
+                return dbName;
+            }
+            // Try to get from Telegram
+            try {
+                const chat = await ctx.telegram.getChat(userId);
+                const username = "username" in chat ? chat.username : undefined;
+                const firstName = "first_name" in chat ? chat.first_name : undefined;
+                return username || firstName || "no name";
+            } catch {
+                return "no name";
+            }
+        };
+        
+        // Get user display names
+        const user1Name = await getUserDisplayName(user1, user1Data.name);
+        const user2Name = await getUserDisplayName(user2, user2Data.name);
+        
         // Format user info with gender and username
         const formatUserInfo = (userData: { name?: string | null; gender?: string | null; age?: string | null; state?: string | null }, userId: number) => {
             const name = userData.name || "Unknown";
@@ -673,8 +695,8 @@ export function initAdminActions(bot: ExtraTelegraf) {
         
         await safeEditMessageText(ctx,
             `<b>👁️ Spectating Chat</b>\n\n` +
-            `<b>User 1:</b>\n${formatUserInfo(user1Data, user1)}\n\n` +
-            `<b>User 2:</b>\n${formatUserInfo(user2Data, user2)}\n\n` +
+            `<b>${user1Name}:</b>\n${formatUserInfo(user1Data, user1)}\n\n` +
+            `<b>${user2Name}:</b>\n${formatUserInfo(user2Data, user2)}\n\n` +
             `<b>⏱️ Duration:</b> ${durationText}\n` +
             `<b>💬 Messages:</b> ${totalMessages} (U1: ${user1Messages}, U2: ${user2Messages})\n\n` +
             `Messages from this chat will be forwarded here in real-time.\n\n` +
@@ -981,6 +1003,23 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
     });
 
+    // Helper function to format premium expiry info
+    const formatPremiumExpiry = (premiumExpires: number): { daysLeft: string; expiryDate: string } => {
+        if (!premiumExpires || premiumExpires <= 0) {
+            return { daysLeft: "N/A", expiryDate: "N/A" };
+        }
+        const now = Date.now();
+        const daysRemaining = Math.ceil((premiumExpires - now) / (1000 * 60 * 60 * 24));
+        let daysLeft: string;
+        if (daysRemaining > 0) {
+            daysLeft = `${daysRemaining}d`;
+        } else {
+            daysLeft = "Expired";
+        }
+        const expiryDate = new Date(premiumExpires).toLocaleDateString();
+        return { daysLeft, expiryDate };
+    };
+    
     // Premium Users List
     bot.action("ADMIN_PREMIUM_USERS", async (ctx) => {
         if (!validateAdmin(ctx)) {
@@ -1021,7 +1060,9 @@ export function initAdminActions(bot: ExtraTelegraf) {
         
         const buttons: Array<Array<ReturnType<typeof Markup.button.callback>>> = [];
         for (const user of users) {
-            message += `User ${user.telegramId}\n`;
+            const { daysLeft, expiryDate } = formatPremiumExpiry(user.premiumExpires || user.premiumExpiry || 0);
+            message += `User \`${user.telegramId}\`\n`;
+            message += `  ⏱ ${daysLeft} (${expiryDate})\n`;
             buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}_PAGE_${page}`)]);
         }
         
@@ -1065,7 +1106,9 @@ export function initAdminActions(bot: ExtraTelegraf) {
         
         const buttons = [];
         for (const user of users) {
-            message += `User ${user.telegramId}\n`;
+            const { daysLeft, expiryDate } = formatPremiumExpiry(user.premiumExpires || user.premiumExpiry || 0);
+            message += `User \`${user.telegramId}\`\n`;
+            message += `  ⏱ ${daysLeft} (${expiryDate})\n`;
             buttons.push([Markup.button.callback(`User ${user.telegramId}`, `ADMIN_PREMIUM_USER_${user.telegramId}_PAGE_${page}`)]);
         }
         
@@ -1108,16 +1151,29 @@ export function initAdminActions(bot: ExtraTelegraf) {
         }
         
         const premiumExpiry = user.premiumExpires || user.premiumExpiry || 0;
-        const expiryDate = premiumExpiry > 0 ? new Date(premiumExpiry).toLocaleDateString() : "N/A";
+        const expiryDate = premiumExpiry > 0 ? new Date(premiumExpiry).toLocaleString() : "N/A";
+        
+        // Calculate days remaining until premium expires
+        let expiresIn = "N/A";
+        if (premiumExpiry > 0) {
+            const now = Date.now();
+            const daysRemaining = Math.ceil((premiumExpiry - now) / (1000 * 60 * 60 * 24));
+            if (daysRemaining > 0) {
+                expiresIn = `${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}`;
+            } else {
+                expiresIn = "Expired";
+            }
+        }
         
         const history = await getUserPaymentHistory(userId);
         const totalPayments = history.length;
-        const lastPayment = history.length > 0 ? new Date(history[0].createdAt).toLocaleDateString() : "N/A";
+        const lastPayment = history.length > 0 ? new Date(history[0].createdAt).toLocaleString() : "N/A";
         
         let message = `👑 *Premium User Details*\n\n`;
         message += `User ID: \`${userId}\`\n`;
         message += `Premium Status: ${user.premium ? "✅ Active" : "❌ Inactive"}\n`;
-        message += `Premium Expiry: ${expiryDate}\n`;
+        message += `Premium Expires: ${expiryDate}\n`;
+        message += `Expires In: ${expiresIn}\n`;
         message += `Total Payments: ${totalPayments}\n`;
         message += `Last Payment: ${lastPayment}\n`;
         
@@ -1360,6 +1416,104 @@ export function initAdminActions(bot: ExtraTelegraf) {
             parse_mode: "Markdown",
             reply_markup: { inline_keyboard: buttons }
         });
+    });
+    
+    // Completed Payments List
+    bot.action("ADMIN_COMPLETED_PAYMENTS", async (ctx) => {
+        if (!validateAdmin(ctx)) {
+            await unauthorizedResponse(ctx, "Unauthorized");
+            return;
+        }
+        await safeAnswerCbQuery(ctx);
+        if (!ctx.from) return;
+        
+        // Only reset to page 0 if not already viewing a specific page
+        if (!paymentOrderPages.has(ctx.from.id)) {
+            paymentOrderPages.set(ctx.from.id, 0);
+        }
+        
+        // Log admin action
+        console.log(JSON.stringify({
+            type: "ADMIN_COMPLETED_PAYMENTS_VIEWED",
+            adminId: ctx.from.id,
+            timestamp: new Date().toISOString()
+        }));
+        
+        const page = 0;
+        const { orders, total } = await getPaymentOrders(page, 10);
+        const completedOrders = orders.filter(o => o.status === "paid");
+        
+        if (completedOrders.length === 0) {
+            await safeEditMessageText(ctx,
+                "✅ *Completed Payments*\n\nNo completed payments found.",
+                { parse_mode: "Markdown", ...paymentOrdersBackKeyboard }
+            );
+            return;
+        }
+        
+        const totalPages = Math.ceil(total / 10);
+        let message = `✅ *Completed Payments*\n\n`;
+        message += `Total: ${completedOrders.length} payments\n`;
+        message += `Page ${page + 1}/${totalPages}\n\n`;
+        
+        const buttons: Array<Array<ReturnType<typeof Markup.button.callback>>> = [];
+        
+        for (const order of completedOrders) {
+            // Get user details
+            const user = await getUser(order.userId);
+            const userName = user?.name || "Unknown";
+            const isActive = user?.premium === true;
+            const expiryDate = user?.premiumExpires || user?.premiumExpiry || 0;
+            
+            const paidAt = order.paidAt 
+                ? new Date(order.paidAt).toLocaleString() 
+                : new Date(order.createdAt).toLocaleString();
+            
+            const premiumStatus = isActive 
+                ? "✅ Active" 
+                : expiryDate > Date.now() 
+                    ? "⏳ Pending" 
+                    : "❌ Inactive";
+            
+            message += `------------------\n`;
+            message += `👤 *${userName}* (\`${order.userId}\`)\n`;
+            message += `  💳 Order: \`${order.orderId}\`\n`;
+            message += `  💰 ${order.starsAmount} Stars (${order.planId})\n`;
+            message += `  📅 Paid: ${paidAt}\n`;
+            message += `  👑 Premium: ${premiumStatus}\n`;
+            
+            if (expiryDate > 0) {
+                message += `  ⏱ Expires: ${new Date(expiryDate).toLocaleDateString()}\n`;
+            }
+            message += "\n";
+            
+            // Add button to view user details
+            buttons.push([
+                Markup.button.callback(
+                    `View ${userName}`, 
+                    `ADMIN_PREMIUM_USER_${order.userId}_PAGE_0`
+                )
+            ]);
+        }
+        
+        // Navigation buttons
+        const navButtons: Array<ReturnType<typeof Markup.button.callback>> = [];
+        if (page > 0) {
+            navButtons.push(Markup.button.callback("◀️ Prev", `ADMIN_COMPLETED_PAYMENTS_PAGE_${page - 1}`));
+        }
+        if (page < totalPages - 1) {
+            navButtons.push(Markup.button.callback("Next ▶️", `ADMIN_COMPLETED_PAYMENTS_PAGE_${page + 1}`));
+        }
+        if (navButtons.length > 0) {
+            buttons.push(navButtons);
+        }
+        buttons.push([Markup.button.callback("⬅️ Back", "ADMIN_PAYMENTS")]);
+        
+        await safeEditMessageText(
+            ctx,
+            message,
+            { parse_mode: "Markdown", reply_markup: { inline_keyboard: buttons } }
+        );
     });
 
     // Payment Orders Pagination

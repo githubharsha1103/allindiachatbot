@@ -1,9 +1,14 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { getUser, updateUser, User, createPremiumPaymentOrder, addProcessedPaymentChargeId, getPremiumPaymentOrder, finalizePremiumPayment, updateOrderStatus } from "../storage/db";
+import { ADMINS } from "./adminAuth";
 
 // Rate limiting for invoice creation
 const invoiceCooldown = new Map<number, number>();
+
+// Cache to prevent duplicate admin notifications (30 second window)
+const notifiedPaymentsCache = new Map<string, number>();
+const NOTIFICATION_CACHE_TTL = 30000;
 const COOLDOWN_MS = 30000; // 30 seconds
 const COOLDOWN_CLEANUP_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -608,6 +613,57 @@ export async function handleSuccessfulPaymentMessage(ctx: Context): Promise<bool
   await ctx.reply(
     `🎉 Premium Activated!\n\n⭐ Plan: ${planName}\n⏳ Valid until: ${premiumUntil}\n\nEnjoy premium features!`
   );
+  
+  // Notify admins about the new premium purchase (with duplicate prevention)
+  const notificationKey = `${userId}_${successfulPayment.telegram_payment_charge_id}`;
+  const lastNotified = notifiedPaymentsCache.get(notificationKey);
+  const now = Date.now();
+  
+  // Skip if we already notified within the TTL window (prevents race condition duplicates)
+  if (lastNotified && now - lastNotified < NOTIFICATION_CACHE_TTL) {
+    console.log(`[PREMIUM_NOTIFY] Skipping duplicate notification for ${notificationKey}`);
+    return true;
+  }
+  
+  try {
+    const user = await getUser(userId);
+    const userName = user?.name || "Unknown";
+    const isPremium = user?.premium === true;
+    const premiumStatus = isPremium ? "✅ Activated" : "⏳ Pending";
+    const adminIds = ADMINS.map(id => parseInt(id));
+    
+    for (const adminId of adminIds) {
+      try {
+        await ctx.telegram.sendMessage(
+          adminId,
+          `💎 *New Premium Purchase*\n\n` +
+          `👤 User: *${userName}* (\`${userId}\`)\n` +
+          `⭐ Plan: ${planName}\n` +
+          `💰 Amount: ${successfulPayment.total_amount} Stars\n` +
+          `👑 Status: ${premiumStatus}\n` +
+          `⏳ Valid until: ${premiumUntil}\n` +
+          `📅 Date: ${new Date().toLocaleString()}`,
+          { parse_mode: "Markdown" }
+        );
+      } catch {
+        // Admin might not exist, ignore
+      }
+    }
+    
+    // Cache the notification to prevent duplicates
+    notifiedPaymentsCache.set(notificationKey, now);
+    
+    // Clean old entries periodically
+    if (notifiedPaymentsCache.size > 100) {
+      for (const [key, timestamp] of notifiedPaymentsCache) {
+        if (now - timestamp > NOTIFICATION_CACHE_TTL) {
+          notifiedPaymentsCache.delete(key);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[PREMIUM_NOTIFY] Failed to notify admins:", error);
+  }
 
   return true;
 }

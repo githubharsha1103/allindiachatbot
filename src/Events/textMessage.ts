@@ -10,6 +10,23 @@ import { waitingForAge } from "../Utils/actionHandler";
 import { getSetupCompleteText, getSetupStepPrompt } from "../Utils/setupFlow";
 import { buildPartnerLeftMessage, exitChatKeyboard } from "../Utils/chatFlow";
 import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
+import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
+
+// Cache for user display names in spectating (5 minute TTL)
+const userDisplayNameCache = new Map<number, { name: string; timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedUserDisplayName(userId: number): string | null {
+  const cached = userDisplayNameCache.get(userId);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.name;
+  }
+  return null;
+}
+
+function setCachedUserDisplayName(userId: number, name: string): void {
+  userDisplayNameCache.set(userId, { name, timestamp: Date.now() });
+}
 
 // Pre-compiled regex for URL detection (performance optimization)
 const urlRegex = /(https?:\/\/)?(www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_.+~#?&//=]*)/i;
@@ -451,7 +468,27 @@ export default {
         const senderId = ctx.from.id;
         
         for (const { adminId, chat } of spectators) {
-          const senderLabel = senderId === chat.user1 ? "User 1" : "User 2";
+          // Get sender's display name (with caching for performance)
+          let senderLabel = getCachedUserDisplayName(senderId);
+          if (!senderLabel) {
+            senderLabel = await getUserDisplayNameFromDb(senderId);
+            if (senderLabel !== "no name") {
+              setCachedUserDisplayName(senderId, senderLabel);
+            } else {
+              // Try Telegram as fallback, cache if available
+              try {
+                const chatObj = await bot.telegram.getChat(senderId);
+                const username = "username" in chatObj ? chatObj.username : undefined;
+                const firstName = "first_name" in chatObj ? chatObj.first_name : undefined;
+                senderLabel = username || firstName || "no name";
+                if (senderLabel !== "no name") {
+                  setCachedUserDisplayName(senderId, senderLabel);
+                }
+              } catch {
+                senderLabel = senderId === chat.user1 ? "User 1" : "User 2";
+              }
+            }
+          }
           
           // Forward the message to each admin spectator
           try {
