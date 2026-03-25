@@ -967,17 +967,26 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 }
 
-// TEMPORARY DEBUG: Log bot token and get bot info
-console.log("RUNTIME BOT TOKEN:", process.env.BOT_TOKEN ? process.env.BOT_TOKEN.slice(0, -6) + "******" : "undefined");
+// Log bot token info (skip in test mode)
+if (process.env.NODE_ENV !== "test") {
+  console.log("RUNTIME BOT TOKEN:", process.env.BOT_TOKEN ? process.env.BOT_TOKEN.slice(0, -6) + "******" : "undefined");
+}
 
-export const bot = new ExtraTelegraf(process.env.BOT_TOKEN!);
+// Create bot instance only if BOT_TOKEN is available
+export const bot = process.env.BOT_TOKEN 
+  ? new ExtraTelegraf(process.env.BOT_TOKEN)
+  : new ExtraTelegraf("dummy_token_for_testing");
 
-// TEMPORARY DEBUG: Get bot info from Telegram
-bot.telegram.getMe().then((me) => {
-  console.log("DEBUG - BOT USERNAME:", me.username);
-  console.log("DEBUG - BOT ID:", me.id);
-  console.log("DEBUG - BOT FIRST NAME:", me.first_name);
-});
+// TEMPORARY DEBUG: Get bot info from Telegram (skip in test mode)
+if (process.env.NODE_ENV !== "test" && process.env.BOT_TOKEN) {
+  bot.telegram.getMe().then((me) => {
+    console.log("DEBUG - BOT USERNAME:", me.username);
+    console.log("DEBUG - BOT ID:", me.id);
+    console.log("DEBUG - BOT FIRST NAME:", me.first_name);
+  }).catch(err => {
+    console.warn("[WARN] Failed to get bot info:", err.message);
+  });
+}
 
 // Global catch handler
 bot.catch(async (err: unknown, ctx) => {
