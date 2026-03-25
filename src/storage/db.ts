@@ -30,10 +30,7 @@ const MONGO_OPTIONS = {
   w: "majority" as const
 };
 
-// ---------- JSON FILE CONCURRENCY LOCK ----------
-// Many fallback operations use the filesystem. to avoid
-// race conditions we serialize access with a simple mutex.
-
+// JSON file concurrency lock
 class JsonMutex {
   private locked = false;
   private queue: (() => void)[] = [];
@@ -60,6 +57,33 @@ class JsonMutex {
 }
 
 const jsonMutex = new JsonMutex();
+
+// Database operation retry utility
+async function withDbRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: unknown;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      console.warn(`[DB_RETRY] ${operationName} failed on attempt ${attempt + 1}/${maxRetries}:`, error);
+      
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  console.error(`[DB_RETRY] ${operationName} failed after ${maxRetries} attempts`);
+  throw lastError;
+}
 
 import { access, readFile, writeFile } from "fs/promises";
 
@@ -431,23 +455,60 @@ if (useMongoDB && !isFallbackMode) {
 // ==================== USER FUNCTIONS ====================
 
 export async function getUser(id: number): Promise<UserWithNew> {
-  if (useMongoDB && !isFallbackMode) {
-    try {
-      const collection = await getUsersCollection();
-      const user = await collection.findOne({ telegramId: id });
-      
-      if (user) {
-        const effectiveExpiry = user.premiumExpires || user.premiumExpiry || 0;
-        if (user.premium && effectiveExpiry > 0 && effectiveExpiry <= Date.now()) {
-          await updateUser(id, { premium: false });
-          user.premium = false;
+  return withDbRetry(async () => {
+    if (useMongoDB && !isFallbackMode) {
+      try {
+        const collection = await getUsersCollection();
+        const user = await collection.findOne({ telegramId: id });
+        
+        if (user) {
+          const effectiveExpiry = user.premiumExpires || user.premiumExpiry || 0;
+          if (user.premium && effectiveExpiry > 0 && effectiveExpiry <= Date.now()) {
+            await updateUser(id, { premium: false });
+            user.premium = false;
+          }
+          return user;
         }
-        return user;
+        
+        // Create new user
+        const newUser: User = {
+          telegramId: id,
+          name: null,
+          gender: null,
+          age: null,
+          state: null,
+          premium: false,
+          daily: 0,
+          preference: "any",
+          lastPartner: null,
+          reportingPartner: null,
+          reportReason: null,
+          blockedUsers: [],
+          isAdminAuthenticated: false,
+          adminSessionExpiresAt: undefined,
+          chatStartTime: null,
+          reportCount: 0,
+          totalChats: 0,
+          reports: 0,
+          banned: false,
+          premiumExpires: null,
+          processedPaymentChargeIds: []
+        };
+        
+        await collection.insertOne(newUser);
+        return { ...newUser, isNew: true };
+      } catch (error) {
+        console.error("[ERROR] - MongoDB getUser error:", error);
+        // Don't permanently switch to fallback - MongoDB might recover
+        // Continue to try JSON fallback for this operation only
       }
-      
-      // Create new user
-      const newUser: User = {
-        telegramId: id,
+    }
+    
+    // JSON fallback (thread-safe via mutex helpers)
+    const dbObj = await readJson<Record<string, unknown>>(JSON_FILE);
+    
+    if (!dbObj[id]) {
+      dbObj[id] = {
         name: null,
         gender: null,
         age: null,
@@ -462,82 +523,49 @@ export async function getUser(id: number): Promise<UserWithNew> {
         isAdminAuthenticated: false,
         adminSessionExpiresAt: undefined,
         chatStartTime: null,
-        reportCount: 0,
-        totalChats: 0,
         reports: 0,
         banned: false,
         premiumExpires: null,
         processedPaymentChargeIds: []
       };
-      
-      await collection.insertOne(newUser);
-      return { ...newUser, isNew: true };
-    } catch (error) {
-      console.error("[ERROR] - MongoDB getUser error:", error);
-      // Don't permanently switch to fallback - MongoDB might recover
-      // Continue to try JSON fallback for this operation only
+      await writeJson(JSON_FILE, dbObj);
+      return { ...(dbObj[id] as Record<string, unknown>), isNew: true } as UserWithNew;
     }
-  }
-  
-  // JSON fallback (thread-safe via mutex helpers)
-  const dbObj = await readJson<Record<string, unknown>>(JSON_FILE);
-  
-  if (!dbObj[id]) {
-    dbObj[id] = {
-      name: null,
-      gender: null,
-      age: null,
-      state: null,
-      premium: false,
-      daily: 0,
-      preference: "any",
-      lastPartner: null,
-      reportingPartner: null,
-      reportReason: null,
-      blockedUsers: [],
-      isAdminAuthenticated: false,
-      adminSessionExpiresAt: undefined,
-      chatStartTime: null,
-      reports: 0,
-      banned: false,
-      premiumExpires: null,
-      processedPaymentChargeIds: []
-    };
-    await writeJson(JSON_FILE, dbObj);
-    return { ...(dbObj[id] as Record<string, unknown>), isNew: true } as UserWithNew;
-  }
-  const user = dbObj[id] as UserWithNew;
-  const effectiveExpiry = user.premiumExpires || user.premiumExpiry || 0;
-  if (user.premium && effectiveExpiry > 0 && effectiveExpiry <= Date.now()) {
-    dbObj[id] = { ...(dbObj[id] as Record<string, unknown>), premium: false };
-    await writeJson(JSON_FILE, dbObj);
-    user.premium = false;
-  }
-  return user;
+    const user = dbObj[id] as UserWithNew;
+    const effectiveExpiry = user.premiumExpires || user.premiumExpiry || 0;
+    if (user.premium && effectiveExpiry > 0 && effectiveExpiry <= Date.now()) {
+      dbObj[id] = { ...(dbObj[id] as Record<string, unknown>), premium: false };
+      await writeJson(JSON_FILE, dbObj);
+      user.premium = false;
+    }
+    return user;
+  }, "getUser");
 }
 
 export async function updateUser(id: number, data: Partial<User>): Promise<void> {
   const normalizedData: Partial<User> = { ...data };
 
-  if (useMongoDB && !isFallbackMode) {
-    try {
-      const collection = await getUsersCollection();
-      await collection.updateOne(
-        { telegramId: id },
-        { $set: { ...normalizedData, telegramId: id } },
-        { upsert: true }
-      );
-      return;
-    } catch (error) {
-      console.error("[ERROR] - MongoDB updateUser error:", error);
-      // Continue to JSON fallback for this operation
+  return withDbRetry(async () => {
+    if (useMongoDB && !isFallbackMode) {
+      try {
+        const collection = await getUsersCollection();
+        await collection.updateOne(
+          { telegramId: id },
+          { $set: { ...normalizedData, telegramId: id } },
+          { upsert: true }
+        );
+        return;
+      } catch (error) {
+        console.error("[ERROR] - MongoDB updateUser error:", error);
+        // Continue to JSON fallback for this operation
+      }
     }
-  }
-  
-  // JSON fallback
-  const dbObj = await readJson(JSON_FILE);
-  dbObj[id] = { ...(dbObj[id] || {}), ...normalizedData };
-  await writeJson(JSON_FILE, dbObj);
+    
+    // JSON fallback
+    const dbObj = await readJson(JSON_FILE);
+    dbObj[id] = { ...(dbObj[id] || {}), ...normalizedData };
+    await writeJson(JSON_FILE, dbObj);
+  }, "updateUser");
 }
 
 export async function setGender(id: number, gender: string): Promise<void> {

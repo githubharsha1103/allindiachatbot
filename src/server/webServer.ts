@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import crypto from 'crypto';
 import { ExtraTelegraf } from '../index';
 import { getDatabaseStatus, pingDatabase } from '../storage/db';
 import { isAdmin } from '../Utils/adminAuth';
@@ -23,6 +24,14 @@ export function createWebServer(bot: ExtraTelegraf): express.Application {
   const app = express();
   const WEBHOOK_PATH = process.env.WEBHOOK_PATH || "/webhook";
 
+  // Store bot reference for health check endpoint
+  app.locals.bot = bot;
+
+  // Rate limiting for admin API
+  const apiRateLimit = new Map<string, { count: number; resetTime: number }>();
+  const API_RATE_LIMIT = 10; // requests per minute
+  const API_RATE_WINDOW = 60 * 1000; // 1 minute
+
   // Use Telegraf's built-in webhook callback
   app.use(bot.webhookCallback(WEBHOOK_PATH));
 
@@ -30,21 +39,44 @@ export function createWebServer(bot: ExtraTelegraf): express.Application {
   app.post("/api/check-admin", express.json(), (req: Request, res: Response) => {
     const { userId } = req.body;
     const apiKey = req.headers['x-api-key'] as string;
-    
+    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+
+    // Rate limiting check
+    const now = Date.now();
+    const clientLimit = apiRateLimit.get(clientIP);
+
+    if (clientLimit && now < clientLimit.resetTime) {
+      if (clientLimit.count >= API_RATE_LIMIT) {
+        return res.status(429).json({ error: "Too many requests" });
+      }
+      clientLimit.count++;
+    } else {
+      apiRateLimit.set(clientIP, { count: 1, resetTime: now + API_RATE_WINDOW });
+    }
+
     // Get configured API key - fail if not set
     const configuredApiKey = process.env.WEB_API_KEY;
-    
+
     // Require API key to be configured in production
     if (!configuredApiKey) {
       // Log once at startup instead of every request
       return res.status(503).json({ error: "Admin API not configured" });
     }
-    
-    // Verify API key matches
-    if (apiKey !== configuredApiKey) {
+
+    // Use timing-safe comparison to prevent timing attacks
+    if (!apiKey || !configuredApiKey) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    
+
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(configuredApiKey))) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+    } catch {
+      // Buffer lengths don't match or other crypto error
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     if (!userId) {
       return res.json({ isAdmin: false });
     }
@@ -62,25 +94,49 @@ export function createWebServer(bot: ExtraTelegraf): express.Application {
       mongoConnected = await pingDatabase();
     }
     
+    // Check queue health
+    const bot = req.app.locals.bot as ExtraTelegraf;
+    const queueHealth = {
+      regularQueue: {
+        size: bot.waitingQueue.length,
+        setSize: bot.queueSet.size,
+        consistent: bot.waitingQueue.length === bot.queueSet.size
+      },
+      premiumQueue: {
+        size: bot.premiumQueue.length,
+        setSize: bot.premiumQueueSet.size,
+        consistent: bot.premiumQueue.length === bot.premiumQueueSet.size
+      },
+      activeChats: bot.runningChats.size,
+      totalUsers: bot.totalUsers,
+      totalChats: bot.totalChats
+    };
+    
+    // Check memory usage
+    const memUsage = process.memoryUsage();
+    const memoryHealth = {
+      rss: Math.round(memUsage.rss / 1024 / 1024), // MB
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024), // MB
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024), // MB
+      external: Math.round(memUsage.external / 1024 / 1024) // MB
+    };
+    
     const healthy = dbStatus.mode === 'mongodb'
-      ? (dbStatus.healthy && mongoConnected)
-      : dbStatus.healthy;
+      ? (dbStatus.healthy && mongoConnected && queueHealth.regularQueue.consistent && queueHealth.premiumQueue.consistent)
+      : (dbStatus.healthy && queueHealth.regularQueue.consistent && queueHealth.premiumQueue.consistent);
+      
     res.json({
       status: healthy ? "OK" : "DEGRADED",
       database: {
         ...dbStatus,
         mongoConnected
       },
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString()
+      queues: queueHealth,
+      memory: memoryHealth
     });
   });
 
-  // Health check endpoints for Render
-  app.get("/healthz", (req: Request, res: Response) => {
-    res.status(200).send("OK");
-  });
-
+  // Readiness probe endpoint
   app.get("/ready", (req: Request, res: Response) => {
     res.status(200).send("READY");
   });
@@ -102,37 +158,37 @@ export async function startWebServer(
   port: number
 ): Promise<void> {
   const WEBHOOK_PATH = process.env.WEBHOOK_PATH || "/webhook";
-  
+
   // Validate webhook URL before starting
   const domain = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
-  
+
   if (!domain) {
     console.error("[ERROR] - Cannot start webhook server: WEBHOOK_URL or RENDER_EXTERNAL_HOSTNAME not set");
     process.exit(1);
   }
-  
+
   if (!isValidWebhookUrl(domain)) {
     console.error(`[ERROR] - Invalid webhook URL: ${domain}. Must be HTTPS or localhost.`);
     process.exit(1);
   }
-  
+
   const webhookUrl = `${domain}${WEBHOOK_PATH}`;
-  
+
   console.log(`[INFO] - Starting webhook server on port ${port}`);
   console.log(`[INFO] - Webhook URL: ${webhookUrl}`);
 
   // Start server first, then set webhook
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     app.listen(port, "0.0.0.0", async () => {
       console.log(`[INFO] - Server listening on port ${port}`);
       console.log(`[INFO] - Health check endpoints active`);
-      
+
       // Set webhook AFTER server is listening
       try {
         // Delete any existing webhook first
         await bot.telegram.deleteWebhook({});
         console.log("[INFO] - Deleted existing webhook");
-        
+
         // Set new webhook
         await bot.telegram.setWebhook(webhookUrl);
         console.log("[INFO] - Webhook set successfully");
@@ -141,7 +197,7 @@ export async function startWebServer(
         console.error("[ERROR] - Failed to set webhook:", errorMessage);
         // Don't exit - bot can still work in polling mode if webhook fails
       }
-      
+
       resolve();
     });
   });

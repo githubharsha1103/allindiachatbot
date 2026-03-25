@@ -204,7 +204,8 @@ export async function handleTelegramError(
 /**
  * Rate limiter to prevent Too Many Requests errors
  */
-const messageQueue: { chatId: number; text: string; extra?: TelegramSendExtra; resolve: (value: boolean) => void }[] = [];
+const messageQueue: { chatId: number; text: string; extra?: TelegramSendExtra; resolve: (value: boolean) => void; retries: number }[] = [];
+const MAX_MESSAGE_RETRIES = 5;
 let isProcessingQueue = false;
 const MIN_DELAY_MS = 1000; // Minimum 1 second between messages
 
@@ -246,14 +247,23 @@ async function processMessageQueue(): Promise<void> {
         cleanupBlockedUserAsync(require("../index").bot, item.chatId);
         item.resolve(false);
       } else if (isRateLimitError(error)) {
-        const delay = getRetryDelay(error) * 1000;
-        console.log(`[RATE LIMIT] - Retrying after ${delay}ms`);
-        
-        // Put the message back at the front of the queue
-        messageQueue.unshift(item);
-        
-        // Wait for the retry delay
-        await new Promise(resolve => setTimeout(resolve, delay));
+        if (item.retries < MAX_MESSAGE_RETRIES) {
+          item.retries++;
+          const delay = getRetryDelay(error) * 1000;
+          console.log(`[RATE LIMIT] - Retrying message to ${item.chatId} (attempt ${item.retries}/${MAX_MESSAGE_RETRIES}) after ${delay}ms`);
+
+          // Put the message back at the front of the queue
+          messageQueue.unshift(item);
+
+          // Wait for the retry delay
+          await new Promise(resolve => setTimeout(resolve, delay));
+          
+          // Exit processing and wait for next cycle to avoid infinite loop
+          break;
+        } else {
+          console.error(`[SEND ERROR] - Max retries exceeded for user ${item.chatId}, dropping message`);
+          item.resolve(false);
+        }
       } else {
         const e = error as { message?: string };
         console.error(`[SEND ERROR] -`, e.message || error);
@@ -275,7 +285,7 @@ export async function safeSendMessage(
   extra?: TelegramSendExtra
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    messageQueue.push({ chatId, text, extra, resolve });
+    messageQueue.push({ chatId, text, extra, resolve, retries: 0 });
     processMessageQueue();
     // resolution will happen inside processMessageQueue when send succeeds/fails
   });

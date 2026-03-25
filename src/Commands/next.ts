@@ -2,7 +2,6 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { areUsersMutuallyBlocked, getUser, updateUser } from "../storage/db";
 import {
-  beginChatRuntime,
   buildPartnerLeftMessage,
   buildPartnerMatchMessage,
   buildSelfSkippedMessage,
@@ -11,15 +10,16 @@ import {
 } from "../Utils/chatFlow";
 import { cleanupBlockedUser, cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
-import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit } from "../index";
+import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit, RATE_LIMIT_MESSAGE } from "../index";
 
-interface WaitingUser {
-  id: number;
-  preference: string;
-  gender: string;
-  isPremium: boolean;
-  blockedUsers?: number[];
-}
+// Type for queue users (kept for reference)
+// type WaitingUser = {
+//   id: number;
+//   preference: string;
+//   gender: string;
+//   isPremium: boolean;
+//   blockedUsers?: number[];
+// };
 
 export default {
   name: "next",
@@ -34,7 +34,7 @@ export default {
 
     // Check user rate limit
     if (checkUserRateLimit(userId)) {
-      return ctx.reply("⏳ Please slow down. Wait a moment before trying again.");
+      return ctx.reply(RATE_LIMIT_MESSAGE);
     }
 
     // Check if broadcast is in progress - block matching during broadcast
@@ -96,28 +96,18 @@ export default {
         const preference = user.preference || "any";
         const isPremium = user.premium || false;
         const myBlockedUsers = user.blockedUsers || [];
-        const matchPreference = isPremium && preference !== "any" ? preference : null;
 
-        let matchIndex = -1;
-        for (let i = 0; i < bot.waitingQueue.length; i++) {
-          const queuedUser = bot.waitingQueue[i] as WaitingUser;
-          if (!bot.queueSet.has(queuedUser.id)) continue;
+        // Use optimized O(1) matching via preference maps
+        const matchResult = await bot.matchFromQueue(userId, {
+          id: userId,
+          preference,
+          gender,
+          isPremium,
+          blockedUsers: myBlockedUsers
+        });
 
-          const waitingGender = queuedUser.gender || "any";
-          const waitingPreference = queuedUser.preference || "any";
-          const genderMatches = !matchPreference || waitingGender === matchPreference;
-          const preferenceMatches = waitingPreference === "any" || waitingPreference === gender;
-
-          if (genderMatches && preferenceMatches) {
-            const blockedByLatestState = await areUsersMutuallyBlocked(userId, queuedUser.id);
-            if (blockedByLatestState) continue;
-
-            matchIndex = i;
-            break;
-          }
-        }
-
-        if (matchIndex === -1) {
+        if (!matchResult.matched || !matchResult.partnerId) {
+          // No match found - add to queue
           const added = await bot.addToQueueAtomic({
             id: userId,
             preference,
@@ -138,25 +128,52 @@ export default {
           }
         }
 
-        const match = bot.waitingQueue[matchIndex] as WaitingUser;
-        bot.waitingQueue.splice(matchIndex, 1);
-        bot.queueSet.delete(match.id);
-        await beginChatRuntime(bot, userId, match.id);
+        const matchId = matchResult.partnerId;
+
+        // Check mutual blocking - if blocked, don't match with this user
+        const blockedByLatestState = await areUsersMutuallyBlocked(userId, matchId);
+        if (blockedByLatestState) {
+          // Remove the match from queue and try to find another
+          await bot.removeFromQueue(matchId);
+          // Try to find another match
+          const retryResult = await bot.matchFromQueue(userId, {
+            id: userId,
+            preference,
+            gender,
+            isPremium,
+            blockedUsers: [...myBlockedUsers, matchId] // Add blocked user to list
+          });
+
+          if (!retryResult.matched || !retryResult.partnerId) {
+            // Put user back in queue
+            const added = await bot.addToQueueAtomic({
+              id: userId,
+              preference,
+              gender,
+              isPremium,
+              blockedUsers: myBlockedUsers
+            });
+            if (!added) {
+              return ctx.reply("⚠️ You are already in the queue!");
+            }
+            return ctx.reply("⏳ Waiting for a partner...");
+          }
+        }
 
         const chatStartTime = Date.now();
-        await updateUser(userId, { lastPartner: match.id, chatStartTime });
-        await updateUser(match.id, { lastPartner: userId, chatStartTime });
+        await updateUser(userId, { lastPartner: matchId, chatStartTime });
+        await updateUser(matchId, { lastPartner: userId, chatStartTime });
 
-        const matchUser = await getUser(match.id);
+        const matchUser = await getUser(matchId);
         bot.incrementChatCount();
 
         const userPartnerInfo = buildPartnerMatchMessage(isPremium, matchUser);
         const matchPartnerInfo = buildPartnerMatchMessage(checkPremiumStatus(user), user);
 
-        const matchSent = await sendMessageWithRetry(bot, match.id, matchPartnerInfo);
+        const matchSent = await sendMessageWithRetry(bot, matchId, matchPartnerInfo);
         if (!matchSent) {
-          const partnerStillThere = bot.runningChats.has(match.id);
-          await endChatDueToError(bot, userId, match.id);
+          const partnerStillThere = bot.runningChats.has(matchId);
+          await endChatDueToError(bot, userId, matchId);
 
           if (partnerStillThere) {
             const refreshedUser = await getUser(userId);

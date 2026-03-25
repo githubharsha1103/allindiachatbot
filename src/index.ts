@@ -38,7 +38,10 @@ export function getIsSystemBusy(): boolean {
 
 // Per-user action timestamps for rate limiting
 const userLastAction: Map<number, number> = new Map();
-const ACTION_COOLDOWN_MS = 1500; // 1.5 seconds between commands
+const ACTION_COOLDOWN_MS = (() => {
+  const val = parseInt(process.env.ACTION_COOLDOWN_MS || "1500", 10);
+  return isNaN(val) ? 1500 : val;
+})(); // 1.5 seconds between commands
 export function checkUserRateLimit(userId: number): boolean {
   const lastAction = userLastAction.get(userId);
   if (lastAction && Date.now() - lastAction < ACTION_COOLDOWN_MS) {
@@ -48,6 +51,9 @@ export function checkUserRateLimit(userId: number): boolean {
   return false;
 }
 
+// Standard rate limit message
+export const RATE_LIMIT_MESSAGE = "⏳ Please slow down! Wait a moment before trying again.";
+
 // Start event loop monitoring
 let lastEventLoopCheck = Date.now();
 const EVENT_LOOP_CHECK_MS = 1000;
@@ -55,20 +61,24 @@ const LAG_THRESHOLD_MS = 300; // Flag as busy if lag exceeds 300ms
 
 if (process.env.NODE_ENV !== "test") {
   setInterval(() => {
-    const now = Date.now();
-    const expectedDiff = EVENT_LOOP_CHECK_MS;
-    const actualDiff = now - lastEventLoopCheck;
-    const lag = actualDiff - expectedDiff;
-    
-    if (lag > LAG_THRESHOLD_MS && !isSystemBusy) {
-      isSystemBusy = true;
-      console.warn(`[PERF] High event loop lag detected: ${lag}ms, system marked busy`);
-    } else if (lag < 100 && isSystemBusy) {
-      isSystemBusy = false;
-      console.log("[PERF] Event loop recovered, system marked ready");
+    try {
+      const now = Date.now();
+      const expectedDiff = EVENT_LOOP_CHECK_MS;
+      const actualDiff = now - lastEventLoopCheck;
+      const lag = actualDiff - expectedDiff;
+
+      if (lag > LAG_THRESHOLD_MS && !isSystemBusy) {
+        isSystemBusy = true;
+        console.warn(`[PERF] High event loop lag detected: ${lag}ms, system marked busy`);
+      } else if (lag < 100 && isSystemBusy) {
+        isSystemBusy = false;
+        console.log("[PERF] Event loop recovered, system marked ready");
+      }
+
+      lastEventLoopCheck = now;
+    } catch (error) {
+      console.error("[PERF] Error in event loop monitor:", error);
     }
-    
-    lastEventLoopCheck = now;
   }, EVENT_LOOP_CHECK_MS);
 }
 
@@ -131,21 +141,24 @@ class Mutex {
         this.locked = true;
         resolve();
       } else {
-        const timeoutId = setTimeout(() => {
-          const idx = this.queue.findIndex(q => q.resolve === resolve);
+        let timeoutId: NodeJS.Timeout | null = null;
+        const token = { resolve, reject };
+
+        timeoutId = setTimeout(() => {
+          const idx = this.queue.indexOf(token);
           if (idx !== -1) {
             this.queue.splice(idx, 1);
           }
           reject(new Error('Mutex acquisition timeout'));
         }, this.timeout);
-        
+
         this.queue.push({
           resolve: () => {
-            clearTimeout(timeoutId);
+            if (timeoutId) clearTimeout(timeoutId);
             resolve();
           },
           reject: (err) => {
-            clearTimeout(timeoutId);
+            if (timeoutId) clearTimeout(timeoutId);
             reject(err);
           }
         });
@@ -185,6 +198,12 @@ export class ExtraTelegraf extends Telegraf<Context> {
   premiumQueueSet: Set<number> = new Set();
   // Premium user set for O(1) lookups
   premiumUsers: Set<number> = new Set();
+
+  // OPTIMIZED: Maps for O(1) preference-based matching
+  // Key format: "preference_gender" (e.g., "male_female", "any_male")
+  private waitingQueueByPreference: Map<string, number[]> = new Map();
+  private premiumQueueByPreference: Map<string, number[]> = new Map();
+
   // Message queue for rate-limited sending
   private _messageQueue: Array<{ userId: number; text: string; extra?: unknown }> = [];
   private _isProcessingQueue = false;
@@ -205,10 +224,17 @@ export class ExtraTelegraf extends Telegraf<Context> {
   rateLimitMap: Map<number, number> = new Map();
   actionCooldownMap: Map<number, Map<string, number>> = new Map();
   
-  ACTION_COOLDOWN = 1000;
-  MAX_QUEUE_SIZE = 10000;
-  MAX_PREMIUM_QUEUE_SIZE = 5000;
-  RATE_LIMIT_WINDOW = 1000;
+  // Helper function to safely parse environment variables with NaN protection
+  private static parseEnvInt(envVar: string | undefined, defaultValue: number): number {
+    if (!envVar) return defaultValue;
+    const parsed = parseInt(envVar, 10);
+    return isNaN(parsed) ? defaultValue : parsed;
+  }
+  
+  ACTION_COOLDOWN = ExtraTelegraf.parseEnvInt(process.env.ACTION_COOLDOWN_MS, 1000);
+  MAX_QUEUE_SIZE = ExtraTelegraf.parseEnvInt(process.env.MAX_QUEUE_SIZE, 10000);
+  MAX_PREMIUM_QUEUE_SIZE = ExtraTelegraf.parseEnvInt(process.env.MAX_PREMIUM_QUEUE_SIZE, 5000);
+  RATE_LIMIT_WINDOW = ExtraTelegraf.parseEnvInt(process.env.RATE_LIMIT_WINDOW_MS, 1000);
 
   chatMutex = new Mutex();
   queueMutex = new Mutex();
@@ -519,13 +545,75 @@ export class ExtraTelegraf extends Telegraf<Context> {
       
       this.waitingQueue.push(user);
       this.queueSet.add(user.id); // O(1) insertion
+      // OPTIMIZED: Update preference map for O(1) matching
+      this.addToPreferenceMap(user, false);
       return true;
     } finally {
       this.queueMutex.release();
     }
   }
 
-  // Match from queue - NOW INTERNALLY PROTECTED BY queueMutex
+  // OPTIMIZED: Helper methods for preference-based matching
+  private addToPreferenceMap(user: { id: number; preference: string; gender: string }, isPremium: boolean): void {
+    const key = `${user.preference || "any"}_${user.gender || "any"}`;
+    const map = isPremium ? this.premiumQueueByPreference : this.waitingQueueByPreference;
+
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key)!.push(user.id);
+  }
+
+  private removeFromPreferenceMap(userId: number, isPremium: boolean): void {
+    const map = isPremium ? this.premiumQueueByPreference : this.waitingQueueByPreference;
+
+    for (const [key, userIds] of map) {
+      const index = userIds.indexOf(userId);
+      if (index !== -1) {
+        userIds.splice(index, 1);
+        if (userIds.length === 0) {
+          map.delete(key);
+        }
+        break;
+      }
+    }
+  }
+
+  private findMatchInPreferenceMap(user: { id: number; preference: string; gender: string; blockedUsers?: number[] }, isPremium: boolean, excludeUserId?: number): number | null {
+    const userGender = user.gender || "any";
+    const userPref = user.preference || "any";
+    const userBlocked = user.blockedUsers || [];
+
+    const map = isPremium ? this.premiumQueueByPreference : this.waitingQueueByPreference;
+
+    // Try exact match first: user wants specific gender, partner wants user's gender
+    const exactKey = `${userPref}_${userGender}`;
+    const exactMatches = map.get(exactKey);
+    if (exactMatches) {
+      for (const partnerId of exactMatches) {
+        if (partnerId !== user.id && partnerId !== excludeUserId && !userBlocked.includes(partnerId)) {
+          return partnerId;
+        }
+      }
+    }
+
+    // Try flexible matches: any preferences
+    const anyKeys = [`any_${userGender}`, `${userPref}_any`, "any_any"];
+    for (const key of anyKeys) {
+      const matches = map.get(key);
+      if (matches) {
+        for (const partnerId of matches) {
+          if (partnerId !== user.id && partnerId !== excludeUserId && !userBlocked.includes(partnerId)) {
+            return partnerId;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // Match from queue - OPTIMIZED with O(1) preference-based matching
   // This ensures thread safety even if callers forget to use withChatStateLock
   // Priority matching:
   // 1. If premiumQueue.length >= 2: match premium users together
@@ -534,95 +622,67 @@ export class ExtraTelegraf extends Telegraf<Context> {
   async matchFromQueue(userId: number, matchData: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<{ matched: boolean; partnerId: number | null }> {
     await this.queueMutex.acquire();
     try {
-      // Helper to check if two users match
-      const usersMatch = (u1: { gender: string; preference: string; blockedUsers?: number[] }, u2Id: number, u2: { gender: string; preference: string; blockedUsers?: number[] }, u1Id: number): boolean => {
-        const u1Gender = u1.gender || "any";
-        const u1Pref = u1.preference || "any";
-        const u2Gender = u2.gender || "any";
-        const u2Pref = u2.preference || "any";
-        const u1Blocked = u1.blockedUsers || [];
-        const u2Blocked = u2.blockedUsers || [];
-        
-        const genderMatches = u1Pref === "any" || u1Pref === u2Gender;
-        const preferenceMatches = u2Pref === "any" || u2Pref === u1Gender;
-        const notBlocked = !u1Blocked.includes(u2Id) && !u2Blocked.includes(u1Id);
-        
-        return genderMatches && preferenceMatches && notBlocked;
-      };
-      
+      let partnerId: number | null = null;
+
       // Priority 1: Match premium users together (premiumQueue >= 2)
       if (matchData.isPremium && this.premiumQueue.length >= 2) {
-        const matchIndex = this.premiumQueue.findIndex(w => {
-          if (!this.premiumQueueSet.has(w.id)) return false;
-          if (w.id === userId) return false;
-          return usersMatch(matchData, w.id, w, userId);
-        });
-        
-        if (matchIndex !== -1) {
-          const match = this.premiumQueue.splice(matchIndex, 1)[0];
-          this.premiumQueueSet.delete(match.id);
-          
-          this.runningChats.set(match.id, userId);
-          this.runningChats.set(userId, match.id);
-          
-          return { matched: true, partnerId: match.id };
+        partnerId = this.findMatchInPreferenceMap(matchData, true, userId);
+        if (partnerId) {
+          // Remove both users from premium queue
+          this.removeFromPremiumQueue(userId);
+          this.removeFromPremiumQueue(partnerId);
+
+          this.runningChats.set(partnerId, userId);
+          this.runningChats.set(userId, partnerId);
+
+          return { matched: true, partnerId };
         }
       }
-      
+
       // Priority 2: Match premium with normal (premiumQueue >= 1 && waitingQueue >= 1)
-      if (matchData.isPremium && this.premiumQueue.length >= 1) {
-        const matchIndex = this.premiumQueue.findIndex(w => {
-          if (!this.premiumQueueSet.has(w.id)) return false;
-          return usersMatch(matchData, w.id, w, userId);
-        });
-        
-        if (matchIndex !== -1) {
-          const match = this.premiumQueue.splice(matchIndex, 1)[0];
-          this.premiumQueueSet.delete(match.id);
-          
-          this.runningChats.set(match.id, userId);
-          this.runningChats.set(userId, match.id);
-          
-          return { matched: true, partnerId: match.id };
+      if (matchData.isPremium && this.premiumQueue.length >= 1 && this.waitingQueue.length >= 1) {
+        partnerId = this.findMatchInPreferenceMap(matchData, false);
+        if (partnerId) {
+          // Remove from respective queues
+          this.removeFromPremiumQueue(userId);
+          this.removeFromQueue(partnerId);
+
+          this.runningChats.set(partnerId, userId);
+          this.runningChats.set(userId, partnerId);
+
+          return { matched: true, partnerId };
         }
       }
-      
+
       // Priority 3: If current user is premium but no match in premium queue, try normal queue
       if (matchData.isPremium && this.waitingQueue.length >= 1) {
-        const matchIndex = this.waitingQueue.findIndex(w => {
-          if (!this.queueSet.has(w.id)) return false;
-          return usersMatch(matchData, w.id, w, userId);
-        });
-        
-        if (matchIndex !== -1) {
-          const match = this.waitingQueue.splice(matchIndex, 1)[0];
-          this.queueSet.delete(match.id);
-          
-          this.runningChats.set(match.id, userId);
-          this.runningChats.set(userId, match.id);
-          
-          return { matched: true, partnerId: match.id };
+        partnerId = this.findMatchInPreferenceMap(matchData, false);
+        if (partnerId) {
+          // Remove from respective queues
+          this.removeFromPremiumQueue(userId);
+          this.removeFromQueue(partnerId);
+
+          this.runningChats.set(partnerId, userId);
+          this.runningChats.set(userId, partnerId);
+
+          return { matched: true, partnerId };
         }
       }
-      
+
       // Priority 4: Match normal users (non-premium or couldn't match premium)
-      const matchIndex = this.waitingQueue.findIndex(w => {
-        if (!this.queueSet.has(w.id)) return false;
-        if (w.id === userId) return false;
-        return usersMatch(matchData, w.id, w, userId);
-      });
-      
-      if (matchIndex === -1) {
-        return { matched: false, partnerId: null };
+      partnerId = this.findMatchInPreferenceMap(matchData, false, userId);
+      if (partnerId) {
+        // Remove both from waiting queue
+        this.removeFromQueue(userId);
+        this.removeFromQueue(partnerId);
+
+        this.runningChats.set(partnerId, userId);
+        this.runningChats.set(userId, partnerId);
+
+        return { matched: true, partnerId };
       }
-      
-      const match = this.waitingQueue.splice(matchIndex, 1)[0];
-      this.queueSet.delete(match.id);
-      
-      this.runningChats.set(match.id, userId);
-      this.runningChats.set(userId, match.id);
-      
-      return { matched: true, partnerId: match.id };
+
+      return { matched: false, partnerId: null };
     } finally {
       this.queueMutex.release();
     }
@@ -645,6 +705,8 @@ export class ExtraTelegraf extends Telegraf<Context> {
       
       this.waitingQueue.splice(idx, 1);
       this.queueSet.delete(userId); // O(1) removal
+      // OPTIMIZED: Remove from preference map
+      this.removeFromPreferenceMap(userId, false);
       return true;
     } finally {
       this.queueMutex.release();
@@ -656,6 +718,39 @@ export class ExtraTelegraf extends Telegraf<Context> {
     this.queueSet.clear();
     this.premiumQueueSet.clear();
     this.premiumUsers.clear();
+  }
+
+  // Synchronize queue state - ensure array and Set are consistent
+  syncQueueState(): void {
+    const seen = new Set<number>();
+    const normalizedQueue: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
+
+    for (const queuedUser of this.waitingQueue) {
+      if (!queuedUser || seen.has(queuedUser.id) || this.runningChats.has(queuedUser.id)) {
+        continue;
+      }
+
+      seen.add(queuedUser.id);
+      normalizedQueue.push(queuedUser);
+    }
+
+    this.waitingQueue = normalizedQueue;
+    this.queueSet = seen;
+  }
+
+  // Trim waiting queue to specified size (removes oldest entries)
+  trimWaitingQueue(maxSize: number): number {
+    if (this.waitingQueue.length <= maxSize) return 0;
+
+    const toRemove = this.waitingQueue.length - maxSize;
+    const removedUsers = this.waitingQueue.splice(0, toRemove);
+
+    // Remove from Set as well
+    for (const user of removedUsers) {
+      this.queueSet.delete(user.id);
+    }
+
+    return toRemove;
   }
 
   // Add user to premium tracking
@@ -683,6 +778,8 @@ export class ExtraTelegraf extends Telegraf<Context> {
       this.premiumQueue.push({ ...user, isPremium: true });
       this.premiumQueueSet.add(user.id);
       this.premiumUsers.add(user.id);
+      // OPTIMIZED: Update preference map for O(1) matching
+      this.addToPreferenceMap(user, true);
       return true;
     } finally {
       this.queueMutex.release();
@@ -698,6 +795,8 @@ export class ExtraTelegraf extends Telegraf<Context> {
       
       this.premiumQueue.splice(idx, 1);
       this.premiumQueueSet.delete(userId);
+      // OPTIMIZED: Remove from preference map
+      this.removeFromPreferenceMap(userId, true);
       return true;
     } finally {
       this.queueMutex.release();
@@ -863,34 +962,6 @@ export class ExtraTelegraf extends Telegraf<Context> {
     }
     
     return removed;
-  }
-
-  syncQueueState(): void {
-    const seen = new Set<number>();
-    const normalizedQueue: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
-
-    for (const queuedUser of this.waitingQueue) {
-      if (!queuedUser || seen.has(queuedUser.id) || this.runningChats.has(queuedUser.id)) {
-        continue;
-      }
-
-      seen.add(queuedUser.id);
-      normalizedQueue.push(queuedUser);
-    }
-
-    this.waitingQueue = normalizedQueue;
-    this.queueSet = seen;
-  }
-
-  trimWaitingQueue(maxSize: number): number {
-    if (this.waitingQueue.length <= maxSize) {
-      return 0;
-    }
-
-    const removeCount = this.waitingQueue.length - maxSize;
-    this.waitingQueue = this.waitingQueue.slice(removeCount);
-    this.syncQueueState();
-    return removeCount;
   }
 }
 

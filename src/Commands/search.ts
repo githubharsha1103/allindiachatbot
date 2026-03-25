@@ -6,20 +6,12 @@ import { cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from
 import { getSetupRequiredPrompt } from "../Utils/setupFlow";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
 import { getIsBroadcasting } from "../index";
-import { getIsSystemBusy, checkUserRateLimit } from "../index";
+import { getIsSystemBusy, checkUserRateLimit, RATE_LIMIT_MESSAGE } from "../index";
 
-interface WaitingUser {
-  id: number;
-  preference: string;
-  gender: string;
-  isPremium: boolean;
-  blockedUsers?: number[];
-}
-
-// Type for lock result
 type LockResult = 
   | { type: "already_in_chat" }
   | { type: "already_in_queue" }
+  | { type: "duplicate_request" }
   | { type: "waiting" }
   | { type: "matched"; matchId: number; userId: number; preference: string; gender: string; isPremium: boolean; blockedUsers: number[] };
 
@@ -54,7 +46,7 @@ export default {
 
     // Check user rate limit
     if (checkUserRateLimit(userId)) {
-      return ctx.reply("⏳ Please slow down. Wait a moment before trying again.");
+      return ctx.reply(RATE_LIMIT_MESSAGE);
     }
 
     // Check if broadcast is in progress - block matching during broadcast
@@ -90,6 +82,12 @@ export default {
       return redirectToSetup(ctx);
     }
 
+    // Extract user data OUTSIDE the lock callback for use inside
+    const preference = user.preference || "any";
+    const gender = user.gender || "any";
+    const isPremium = checkPremiumStatus(user);
+    const myBlockedUsers = user.blockedUsers || [];
+
     // Check if user is already in a chat or queue BEFORE lock (outside lock for performance)
     if (bot.runningChats.has(userId) || (user.lastPartner && user.chatStartTime)) {
       return ctx.reply(
@@ -104,70 +102,64 @@ export default {
     // Use safe lock wrapper - only queue operations inside lock
     const lockResult = await bot.withChatStateLockSafe(
       async (): Promise<LockResult> => {
-        const gender = user.gender || "any";
-        const preference = user.preference || "any";
-        const isPremium = user.premium || false;
-        const myBlockedUsers = user.blockedUsers || [];
-
-        // Double-check state inside lock
-        if (bot.runningChats.has(userId) || (user.lastPartner && user.chatStartTime)) {
-          return { type: "already_in_chat" };
+        // Check for duplicate request INSIDE lock to prevent race condition
+        if (bot.hasPendingLockRequest(userId)) {
+          return { type: "duplicate_request" };
         }
+        bot.setPendingLockRequest(userId);
 
-        if (bot.isInQueue(userId)) {
-          return { type: "already_in_queue" };
-        }
-
-        const matchPreference = isPremium && preference !== "any" ? preference : null;
-        let matchIndex = -1;
-
-        for (let i = 0; i < bot.waitingQueue.length; i++) {
-          const queuedUser = bot.waitingQueue[i] as WaitingUser;
-          if (!bot.queueSet.has(queuedUser.id)) continue;
-
-          const waitingGender = queuedUser.gender || "any";
-          const waitingPreference = queuedUser.preference || "any";
-          const genderMatches = !matchPreference || waitingGender === matchPreference;
-          const preferenceMatches = waitingPreference === "any" || waitingPreference === gender;
-
-          if (genderMatches && preferenceMatches) {
-            matchIndex = i;
-            break;
+        try {
+          // Double-check state inside lock
+          if (bot.runningChats.has(userId) || (user.lastPartner && user.chatStartTime)) {
+            return { type: "already_in_chat" };
           }
-        }
 
-        if (matchIndex === -1) {
-          const added = await bot.addToQueueAtomic({
+          if (bot.isInQueue(userId)) {
+            return { type: "already_in_queue" };
+          }
+
+          // Use optimized O(1) matching via preference maps
+          const matchResult = await bot.matchFromQueue(userId, {
             id: userId,
             preference,
             gender,
             isPremium,
             blockedUsers: myBlockedUsers
           });
-          if (!added) {
-            return { type: "already_in_queue" };
+
+          if (!matchResult.matched || !matchResult.partnerId) {
+            // No match found - add to queue
+            const added = await bot.addToQueueAtomic({
+              id: userId,
+              preference,
+              gender,
+              isPremium,
+              blockedUsers: myBlockedUsers
+            });
+            if (!added) {
+              return { type: "already_in_queue" };
+            }
+            return { type: "waiting" };
           }
-          return { type: "waiting" };
+
+          // Found match
+          const matchId = matchResult.partnerId;
+
+          // Initialize chat runtime
+          await beginChatRuntime(bot, userId, matchId);
+
+          return { 
+            type: "matched", 
+            matchId, 
+            userId, 
+            preference, 
+            gender, 
+            isPremium, 
+            blockedUsers: myBlockedUsers 
+          };
+        } finally {
+          bot.clearPendingLockRequest(userId);
         }
-
-        // Found match - extract data for processing outside lock
-        const match = bot.waitingQueue[matchIndex] as WaitingUser;
-        const matchId = match.id;
-
-        // Quick queue operations only
-        bot.waitingQueue.splice(matchIndex, 1);
-        bot.queueSet.delete(matchId);
-        await beginChatRuntime(bot, userId, matchId);
-
-        return { 
-          type: "matched", 
-          matchId, 
-          userId, 
-          preference, 
-          gender, 
-          isPremium, 
-          blockedUsers: myBlockedUsers 
-        };
       },
       userId,
       "⚠️ Server busy, please try again in a few seconds"
@@ -191,6 +183,10 @@ export default {
 
     if (result.type === "already_in_queue") {
       return ctx.reply("⚠️ You are already in the queue!");
+    }
+
+    if (result.type === "duplicate_request") {
+      return ctx.reply("⏳ Your search request is already being processed. Please wait.");
     }
 
     if (result.type === "waiting") {

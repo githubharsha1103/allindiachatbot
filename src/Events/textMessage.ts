@@ -8,6 +8,7 @@ import { waitingForBroadcast, waitingForUserId } from "../Commands/adminaccess";
 import { showUserDetails } from "../Commands/adminaccess";
 import { waitingForAge } from "../Utils/actionHandler";
 import { getSetupCompleteText, getSetupStepPrompt } from "../Utils/setupFlow";
+import DOMPurify from 'isomorphic-dompurify';
 import { buildPartnerLeftMessage, exitChatKeyboard } from "../Utils/chatFlow";
 import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
 import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
@@ -76,6 +77,8 @@ export default {
         waitingForBroadcast.delete(ctx.from.id);
 
         const broadcastText = text || "(No message content)";
+        // Sanitize input to prevent XSS if web frontend is added later
+        const sanitizedText = DOMPurify.sanitize(broadcastText, { ALLOWED_TAGS: [] });
         const users = await getAllUsers();
 
         if (users.length === 0) {
@@ -84,7 +87,7 @@ export default {
 
         // Send broadcast with rate limiting
         const userIds = users.map(id => Number(id)).filter(id => !isNaN(id));
-        const { success, failed } = await broadcastWithRateLimit(bot, userIds, broadcastText);
+        const { success, failed } = await broadcastWithRateLimit(bot, userIds, sanitizedText);
 
         console.log(`[BROADCAST] - Completed: Sent ${success}, Failed ${failed}`);
         
@@ -133,8 +136,8 @@ export default {
         }
         
         // Safely parse the user ID
-        const userId = parseInt(userIdText, 10);
-        if (isNaN(userId) || userId <= 0) {
+        const userId = Number.parseInt(userIdText, 10);
+        if (!Number.isInteger(userId) || userId <= 0 || userId.toString() !== userIdText) {
             return ctx.reply(
                 "❌ Invalid User ID. Please enter a numeric ID.",
                 { parse_mode: "Markdown" }
@@ -383,8 +386,12 @@ export default {
     const sendTypingIndicator = async () => {
       try {
         await ctx.telegram.sendChatAction(partner, getChatAction());
-        // Add delay to simulate natural typing
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // OPTIMIZED: Reduced delay to simulate natural typing (configurable)
+        const typingDelay = (() => {
+          const val = parseInt(process.env.TYPING_DELAY_MS || "500", 10);
+          return isNaN(val) ? 500 : val;
+        })();
+        await new Promise(resolve => setTimeout(resolve, typingDelay));
       } catch {
         // Partner might have left, ignore typing indicator errors
         console.log(`[CHAT] - Could not send typing indicator to ${partner}`);

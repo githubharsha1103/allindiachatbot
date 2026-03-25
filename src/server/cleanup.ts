@@ -21,6 +21,22 @@ export function cleanupStaleData(bot: ExtraTelegraf): void {
       }
     }
     
+    // Clean up message maps for users not in active chats (prevent memory leaks)
+    for (const [userId] of bot.messageMap) {
+      if (!bot.runningChats.has(userId)) {
+        bot.messageMap.delete(userId);
+        bot.messageCountMap.delete(userId);
+        console.log(`[CLEANUP] Removed stale message data for user ${userId} (not in active chat)`);
+      }
+    }
+    
+    // Clean up message count map entries not in message map
+    for (const [userId] of bot.messageCountMap) {
+      if (!bot.messageMap.has(userId)) {
+        bot.messageCountMap.delete(userId);
+      }
+    }
+    
     // Clean up stale spectator sessions (where users are no longer in active chats)
     // Note: Iterating a Map while deleting is safe in JavaScript - the iterator is not affected
     // by deletions that occur after the current entry was visited
@@ -44,7 +60,7 @@ export function cleanupStaleData(bot: ExtraTelegraf): void {
       }
     }
     
-    console.log(`[CLEANUP] - Rate limit map: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length} (Set: ${bot.queueSet.size}), Spectating: ${spectatorCount}`);
+    console.log(`[CLEANUP] - Rate limit map: ${bot.rateLimitMap.size}, Running chats: ${bot.runningChats.size}, Waiting queue: ${bot.waitingQueue.length} (Set: ${bot.queueSet.size}), Spectating: ${spectatorCount}, Message maps: ${bot.messageMap.size}`);
   } catch (error) {
     console.error("[CLEANUP] - Error during cleanup:", error);
   }
@@ -84,26 +100,51 @@ export function enforceQueueSizeLimit(bot: ExtraTelegraf): void {
  */
 export function filterQueueUsersInChats(bot: ExtraTelegraf): void {
   const initialLength = bot.waitingQueue.length;
+  const initialPremiumLength = bot.premiumQueue.length;
   
-  // Filter array - keep users NOT in running chats
+  // Filter regular queue - keep users NOT in running chats
   bot.waitingQueue = bot.waitingQueue.filter(user => {
-    return !bot.runningChats.has(user.id);
+    if (bot.runningChats.has(user.id)) {
+      console.log(`[CLEANUP] Removed user ${user.id} from queue (in active chat)`);
+      return false;
+    }
+    return true;
   });
   
-  // Rebuild queueSet to ensure consistency with array
+  // Filter premium queue - keep users NOT in running chats
+  bot.premiumQueue = bot.premiumQueue.filter(user => {
+    if (bot.runningChats.has(user.id)) {
+      console.log(`[CLEANUP] Removed user ${user.id} from premium queue (in active chat)`);
+      return false;
+    }
+    return true;
+  });
+  
+  // Rebuild queueSets to ensure consistency with arrays
   bot.queueSet.clear();
   for (const user of bot.waitingQueue) {
     bot.queueSet.add(user.id);
   }
   
-  const removed = initialLength - bot.waitingQueue.length;
-  if (removed > 0) {
-    console.log(`[CLEANUP] - Removed ${removed} users from queue who were in active chats`);
+  bot.premiumQueueSet.clear();
+  for (const user of bot.premiumQueue) {
+    bot.premiumQueueSet.add(user.id);
   }
   
-  // Log mismatch if detected
+  const removed = initialLength - bot.waitingQueue.length;
+  const premiumRemoved = initialPremiumLength - bot.premiumQueue.length;
+  
+  if (removed > 0 || premiumRemoved > 0) {
+    console.log(`[CLEANUP] Removed ${removed} users from regular queue and ${premiumRemoved} from premium queue who were in active chats`);
+  }
+  
+  // Log mismatches if detected
   if (bot.queueSet.size !== bot.waitingQueue.length) {
-    console.log(`[CLEANUP] - Queue consistency fix: Set size ${bot.queueSet.size}, Array length ${bot.waitingQueue.length}`);
+    console.log(`[CLEANUP] Queue consistency fix: Set size ${bot.queueSet.size}, Array length ${bot.waitingQueue.length}`);
+  }
+  
+  if (bot.premiumQueueSet.size !== bot.premiumQueue.length) {
+    console.log(`[CLEANUP] Premium queue consistency fix: Set size ${bot.premiumQueueSet.size}, Array length ${bot.premiumQueue.length}`);
   }
 }
 
@@ -176,6 +217,15 @@ export function registerCleanupTasks(bot: ExtraTelegraf): void {
   
   // Queue safety filter every 30 seconds
   setInterval(() => filterQueueUsersInChats(bot), 30000);
+  
+  // Queue state synchronization every 2 minutes
+  setInterval(() => {
+    try {
+      bot.syncQueueState();
+    } catch (error) {
+      console.error("[CLEANUP] - Error during queue synchronization:", error);
+    }
+  }, 120000);
 
   // Revoke expired premium users every hour
   setInterval(async () => {

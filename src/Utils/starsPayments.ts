@@ -1,7 +1,8 @@
 import { Context, Markup } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { getUser, updateUser, User, createPremiumPaymentOrder, addProcessedPaymentChargeId, getPremiumPaymentOrder, finalizePremiumPayment, updateOrderStatus } from "../storage/db";
+import { updateUser, getUser, addProcessedPaymentChargeId, createPremiumPaymentOrder, getPremiumPaymentOrder, finalizePremiumPayment, updateOrderStatus, User } from "../storage/db";
 import { ADMINS } from "./adminAuth";
+import { grantPremium } from "./premiumService";
 
 // Rate limiting for invoice creation
 const invoiceCooldown = new Map<number, number>();
@@ -45,6 +46,38 @@ function cleanupInvoiceCooldowns(): void {
 
 // Run cleanup every 5 minutes
 setInterval(cleanupInvoiceCooldowns, 5 * 60 * 1000);
+
+/**
+ * Handle payment processing with idempotency protection
+ * Prevents duplicate processing of the same charge ID
+ */
+export async function handlePayment(chargeId: string, userId: number, amount: number): Promise<boolean> {
+  const user = await getUser(userId);
+
+  // Check if user exists
+  if (!user) {
+    console.error(`[PAYMENT] User ${userId} not found for charge ${chargeId}`);
+    return false;
+  }
+
+  // Check if already processed (idempotency check)
+  if (user.processedPaymentChargeIds?.includes(chargeId)) {
+    console.log(`[PAYMENT] Duplicate charge ${chargeId} for user ${userId}, skipping`);
+    return true; // Already processed successfully
+  }
+
+  try {
+    // Process payment - convert stars amount to premium days
+    // 100 stars = 7 days (weekly plan), so ~14.28 stars/day
+    const days = Math.floor(amount / 14.28);
+    await grantPremium(userId, Math.max(days, 1)); // At least 1 day
+    await addProcessedPaymentChargeId(userId, chargeId);
+    return true;
+  } catch (error) {
+    console.error(`[PAYMENT] Failed to process ${chargeId}:`, error);
+    return false;
+  }
+}
 
 type PremiumPlanId = "premium_daily" | "premium_weekly" | "premium_monthly" | "premium_yearly";
 
@@ -107,7 +140,7 @@ function formatDate(timestamp: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function isPremium(user: Pick<User, "premium" | "premiumExpires" | "premiumExpiry">): boolean {
+export function isPremium(user: Pick<User, "premium"> & { premiumExpires?: number | null; premiumExpiry?: number | null }): boolean {
   const expiry = user.premiumExpires || user.premiumExpiry || 0;
   // Use >= to ensure users whose expiry is exactly now are still considered premium
   return !!user.premium && expiry >= Date.now();

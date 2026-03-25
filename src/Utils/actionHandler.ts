@@ -14,6 +14,18 @@ import { getSetupCompleteText } from "./setupFlow";
 import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
 import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
 
+// Valid preference options
+export const genderOptions = ["male", "female", "any"] as const;
+export type GenderPreference = typeof genderOptions[number];
+
+// Valid gender options
+export const userGenderOptions = ["male", "female"] as const;
+export type UserGender = typeof userGenderOptions[number];
+
+// Valid state options
+export const stateOptions = ["Telangana", "Andhra Pradesh"] as const;
+export type UserState = typeof stateOptions[number];
+
 // Because it doesn't know that ctx has a match property. by default, Context<Update> doesn't include match, but telegraf adds it dynamically when using regex triggers.
 export interface ActionContext extends Context {
     match?: RegExpMatchArray;
@@ -537,14 +549,30 @@ bot.action("SET_GENDER", async (ctx) => {
 
 bot.action("GENDER_MALE", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { gender: "male" });
+    
+    // Validate gender value
+    const gender: UserGender = "male";
+    if (!userGenderOptions.includes(gender)) {
+        await safeAnswerCbQuery(ctx, "Invalid gender value");
+        return;
+    }
+    
+    await updateUser(ctx.from.id, { gender });
     await safeAnswerCbQuery(ctx, "Gender set to Male ✅");
     await showSettings(ctx);
 });
 
 bot.action("GENDER_FEMALE", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { gender: "female" });
+    
+    // Validate gender value
+    const gender: UserGender = "female";
+    if (!userGenderOptions.includes(gender)) {
+        await safeAnswerCbQuery(ctx, "Invalid gender value");
+        return;
+    }
+    
+    await updateUser(ctx.from.id, { gender });
     await safeAnswerCbQuery(ctx, "Gender set to Female ✅");
     await showSettings(ctx);
 });
@@ -584,14 +612,30 @@ bot.action("SET_STATE", async (ctx) => {
 
 bot.action("STATE_TELANGANA", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { state: "Telangana" });
+    
+    // Validate state value
+    const state: UserState = "Telangana";
+    if (!stateOptions.includes(state)) {
+        await safeAnswerCbQuery(ctx, "Invalid state value");
+        return;
+    }
+    
+    await updateUser(ctx.from.id, { state });
     await safeAnswerCbQuery(ctx, "State set to Telangana ✅");
     await showSettings(ctx);
 });
 
 bot.action("STATE_AP", async (ctx) => {
     if (!ctx.from) return;
-    await updateUser(ctx.from.id, { state: "Andhra Pradesh" });
+    
+    // Validate state value
+    const state: UserState = "Andhra Pradesh";
+    if (!stateOptions.includes(state)) {
+        await safeAnswerCbQuery(ctx, "Invalid state value");
+        return;
+    }
+    
+    await updateUser(ctx.from.id, { state });
     await safeAnswerCbQuery(ctx, "State set to Andhra Pradesh ✅");
     await showSettings(ctx);
 });
@@ -635,8 +679,15 @@ bot.action("PREF_MALE", async (ctx) => {
         return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
+    // Validate preference value
+    const preference: GenderPreference = "male";
+    if (!genderOptions.includes(preference)) {
+        await safeAnswerCbQuery(ctx, "Invalid preference value");
+        return;
+    }
+    
     await safeAnswerCbQuery(ctx, "Preference saved: Male ✅");
-    await updateUser(ctx.from.id, { preference: "male" });
+    await updateUser(ctx.from.id, { preference });
     await showSettings(ctx);
 });
 
@@ -650,8 +701,15 @@ bot.action("PREF_ANY", async (ctx) => {
         return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
+    // Validate preference value
+    const preference: GenderPreference = "any";
+    if (!genderOptions.includes(preference)) {
+        await safeAnswerCbQuery(ctx, "Invalid preference value");
+        return;
+    }
+    
     await safeAnswerCbQuery(ctx, "Preference saved: Any ✅");
-    await updateUser(ctx.from.id, { preference: "any" });
+    await updateUser(ctx.from.id, { preference });
     await showSettings(ctx);
 });
 
@@ -665,8 +723,15 @@ bot.action("PREF_FEMALE", async (ctx) => {
         return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
     }
     
+    // Validate preference value
+    const preference: GenderPreference = "female";
+    if (!genderOptions.includes(preference)) {
+        await safeAnswerCbQuery(ctx, "Invalid preference value");
+        return;
+    }
+    
     await safeAnswerCbQuery(ctx, "Preference saved: Female ✅");
-    await updateUser(ctx.from.id, { preference: "female" });
+    await updateUser(ctx.from.id, { preference });
     await showSettings(ctx);
 });
 
