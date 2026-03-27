@@ -35,7 +35,9 @@ export async function grantPremium(userId: number, days: number = 30): Promise<{
  * @param userId - The user's Telegram ID
  */
 export async function grantLifetimePremium(userId: number): Promise<{ success: boolean; premiumExpires: number }> {
-    const premiumExpires = Number.MAX_SAFE_INTEGER;
+    // Use year 9999 as "forever" date - easier to handle than Number.MAX_SAFE_INTEGER
+    // This is approximately 253402300799999 ms (year 9999, December 31, 23:59:59.999)
+    const premiumExpires = 253402300799999;
     
     await updateUser(userId, {
         premium: true,

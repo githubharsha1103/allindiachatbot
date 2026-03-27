@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { bot } from "../index";
+import { bot, ExtraTelegraf } from "../index";
 import { Context, Telegraf } from "telegraf";
 import { Markup } from "telegraf";
 import { updateUser, getUser, getReferralCount, banUser, isBanned, createReport, blockUserForUser, getBlockedUsers, unblockUserForUser } from "../storage/db";
@@ -37,6 +37,258 @@ export interface Action {
     execute: (ctx: ActionContext, bot: Telegraf<Context>) => Promise<unknown>;
     disabled?: boolean;
 }
+
+// ==================== Search UI Functions ====================
+
+// Search animation messages
+const SEARCH_MESSAGES = [
+  "🔎 Searching for a partner…",
+  "🔎 Finding best match…",
+  "🔎 Almost there…"
+];
+
+/**
+ * Global cleanup function - removes user from ALL states
+ * Prevents: ghost users, stuck matches, memory leaks
+ * FIX #1: Now removes from queues and runningChats
+ */
+export function removeUserEverywhere(bot: ExtraTelegraf, userId: number): void {
+  // 1. Clear search map and interval
+  const searchData = bot.userSearchMap.get(userId);
+  if (searchData?.interval) {
+    clearInterval(searchData.interval);
+    console.log(`[CLEANUP] Cleared interval for user ${userId}`);
+  }
+  bot.userSearchMap.delete(userId);
+  
+  // 2. Remove from regular queue (safety net)
+  const queueIdx = bot.waitingQueue.findIndex(u => u.id === userId);
+  if (queueIdx !== -1) {
+    bot.waitingQueue.splice(queueIdx, 1);
+    bot.queueSet.delete(userId);
+    console.log(`[CLEANUP] Removed user ${userId} from waiting queue`);
+  }
+  
+  // 3. Remove from premium queue (safety net)
+  const premiumIdx = bot.premiumQueue.findIndex(u => u.id === userId);
+  if (premiumIdx !== -1) {
+    bot.premiumQueue.splice(premiumIdx, 1);
+    bot.premiumQueueSet.delete(userId);
+    console.log(`[CLEANUP] Removed user ${userId} from premium queue`);
+  }
+  
+  // 4. Remove from running chats (safety net)
+  if (bot.runningChats.has(userId)) {
+    bot.runningChats.delete(userId);
+    console.log(`[CLEANUP] Removed user ${userId} from running chats`);
+  }
+  
+  console.log(`[CLEANUP] Fully cleaned user ${userId} from all states`);
+}
+
+/**
+ * Start searching - show "Searching..." message with Stop button and animation
+ * FIX #2: Prevent duplicate search - check if already searching
+ * FIX #3: Prevent interval duplication - clear existing interval first
+ */
+export async function startSearch(ctx: ActionContext, bot: ExtraTelegraf, userId: number): Promise<void> {
+  // FIX #2: Prevent duplicate searches
+  if (bot.userSearchMap.has(userId)) {
+    console.log(`[startSearch] User ${userId} already searching, ignoring`);
+    return;
+  }
+  
+  // FIX #3: Clear any existing interval before creating new one
+  const existing = bot.userSearchMap.get(userId);
+  if (existing?.interval) {
+    clearInterval(existing.interval);
+    console.log(`[startSearch] Cleared existing interval for user ${userId}`);
+  }
+  
+  const stopKeyboard = {
+    inline_keyboard: [
+      [{ text: "⛔ Stop", callback_data: "stop_search" }]
+    ]
+  };
+  
+  try {
+    const sentMessage = await ctx.reply(SEARCH_MESSAGES[0], {
+      reply_markup: stopKeyboard
+    });
+    
+    if (sentMessage && 'message_id' in sentMessage) {
+      // Start animation interval
+      let messageIndex = 0;
+      const interval = setInterval(async () => {
+        // FIX #8: INTERVAL SAFETY - Check if user still in search map
+        if (!bot.userSearchMap.has(userId)) {
+          clearInterval(interval);
+          return;
+        }
+        
+        // Check if user was matched
+        if (bot.runningChats.has(userId)) {
+          clearInterval(interval);
+          return;
+        }
+        
+        messageIndex = (messageIndex + 1) % SEARCH_MESSAGES.length;
+        try {
+          await bot.telegram.editMessageText(
+            sentMessage.chat.id,
+            sentMessage.message_id,
+            undefined,
+            SEARCH_MESSAGES[messageIndex],
+            { reply_markup: stopKeyboard }
+          );
+        } catch (err: any) {
+          // FIX #10: IMPROVED ERROR LOGGING
+          if (!err.description?.includes("message is not modified")) {
+            console.error(`[ANIMATION] Error editing message for user ${userId}:`, err.message);
+            clearInterval(interval);
+          }
+        }
+      }, 2500); // Rotate every 2.5 seconds
+      
+      // Store message info with interval
+      bot.userSearchMap.set(userId, {
+        chatId: sentMessage.chat.id,
+        messageId: sentMessage.message_id,
+        interval
+      });
+      
+      console.log(`[SEARCH] User ${userId} started searching with animation`);
+    }
+  } catch (error) {
+    console.error(`[startSearch] Failed to send search message for user ${userId}:`, error);
+  }
+}
+
+/**
+ * Stop searching - uses global cleanup for memory safety
+ */
+export async function stopSearch(bot: ExtraTelegraf, userId: number): Promise<void> {
+  const searchInfo = bot.userSearchMap.get(userId);
+  
+  if (!searchInfo) {
+    console.log(`[stopSearch] No search message found for user ${userId}`);
+    return;
+  }
+  
+  // Clear animation interval
+  if (searchInfo.interval) {
+    clearInterval(searchInfo.interval);
+  }
+  
+  try {
+    // Edit message to remove keyboard and show "stopped"
+    await bot.telegram.editMessageText(
+      searchInfo.chatId,
+      searchInfo.messageId,
+      undefined,
+      "❌ Search stopped.",
+      { reply_markup: { inline_keyboard: [] } }
+    );
+    console.log(`[stopSearch] Updated message for user ${userId}`);
+  } catch (err: any) {
+    // SAFE ERROR LOGGING: Log meaningful errors
+    if (!err.description?.includes("message is not modified") && 
+        !err.description?.includes("message to edit not found")) {
+      console.error(`[stopSearch] Error for user ${userId}:`, err.message);
+    }
+  }
+  
+  // Clean up
+  bot.userSearchMap.delete(userId);
+}
+
+/**
+ * On match found - with delay for human-like UX
+ * Uses global cleanup for memory safety
+ */
+export async function onMatchFound(bot: ExtraTelegraf, userId: number): Promise<void> {
+  const searchInfo = bot.userSearchMap.get(userId);
+  
+  if (!searchInfo) {
+    // No search message to update - this can happen if user was matched immediately
+    console.log(`[onMatchFound] No search message for user ${userId} (immediate match?)`);
+    return;
+  }
+  
+  // Clear animation interval
+  if (searchInfo.interval) {
+    clearInterval(searchInfo.interval);
+  }
+  
+  try {
+    // Edit message to show "Partner found!" and remove keyboard
+    await bot.telegram.editMessageText(
+      searchInfo.chatId,
+      searchInfo.messageId,
+      undefined,
+      "🎉 Partner found!\n⏳ Connecting...",
+      { reply_markup: { inline_keyboard: [] } }
+    );
+    console.log(`[onMatchFound] Updated message for user ${userId}`);
+  } catch (err: any) {
+    // SAFE ERROR LOGGING
+    if (!err.description?.includes("message is not modified") && 
+        !err.description?.includes("message to edit not found")) {
+      console.error(`[onMatchFound] Error for user ${userId}:`, err.message);
+    }
+  }
+  
+  // Clean up
+  bot.userSearchMap.delete(userId);
+}
+
+/**
+ * Send connection message after match - with delay for human-like UX
+ * Called after onMatchFound with 1.2s delay
+ */
+export async function sendConnectionMessage(bot: ExtraTelegraf, userId: number): Promise<void> {
+  try {
+    await bot.telegram.sendMessage(userId, "💬 You are now connected. Say hi!");
+    console.log(`[Connection] Sent to user ${userId}`);
+  } catch (err: any) {
+    // User might have blocked bot - that's okay, but log it
+    if (!err.description?.includes("bot was blocked")) {
+      console.error(`[Connection] Error sending to user ${userId}:`, err.message);
+    }
+  }
+}
+
+// ==================== Action Handlers ====================
+
+/**
+ * Stop Search button handler - uses global cleanup for memory safety
+ */
+bot.action("stop_search", async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  
+  try {
+    await ctx.answerCbQuery();
+  } catch {
+    // Ignore callback query errors
+  }
+  
+  // Check if user was already matched (ignore if so)
+  if (bot.runningChats.has(userId)) {
+    return; // User was already matched, ignore stop action
+  }
+  
+  // Remove from queue
+  try {
+    await bot.removeFromQueue(userId);
+    await bot.removeFromPremiumQueue(userId);
+  } catch (error) {
+    console.error(`[stop_search] Error removing user ${userId} from queue:`, error);
+  }
+  
+  // Use global cleanup for memory safety
+  removeUserEverywhere(bot as unknown as ExtraTelegraf, userId);
+});
 
 export async function loadActions() {
     try {

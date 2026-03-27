@@ -247,6 +247,9 @@ export class ExtraTelegraf extends Telegraf<Context> {
   
   // Track pending lock requests per user to prevent duplicate requests
   private pendingLockRequests: Map<number, boolean> = new Map();
+  
+  // Search UI: Track searching message for each user (chatId, messageId, interval)
+  userSearchMap: Map<number, { chatId: number; messageId: number; interval?: NodeJS.Timeout }> = new Map();
 
   // Check if user has a pending lock request (prevent duplicates)
   hasPendingLockRequest(userId: number): boolean {

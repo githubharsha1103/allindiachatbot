@@ -2,11 +2,12 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { getUser, updateUser } from "../storage/db";
 import { beginChatRuntime, buildPartnerMatchMessage } from "../Utils/chatFlow";
-import { cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
+import { endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
 import { getSetupRequiredPrompt } from "../Utils/setupFlow";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
 import { getIsBroadcasting } from "../index";
 import { getIsSystemBusy, checkUserRateLimit, RATE_LIMIT_MESSAGE } from "../index";
+import { onMatchFound, startSearch, sendConnectionMessage, removeUserEverywhere } from "../Utils/actionHandler";
 
 type LockResult = 
   | { type: "already_in_chat" }
@@ -190,17 +191,28 @@ export default {
     }
 
     if (result.type === "waiting") {
-      // User added to queue - send message outside lock
-      try {
-        return await ctx.reply("⏳ Waiting for a partner...");
-      } catch {
-        await cleanupBlockedUserAsync(bot, userId);
-        return ctx.reply("⚠️ Unable to send message. You may have blocked the bot.");
-      }
+      // FIX #6: Ensure queue consistency - cleanup before adding
+      removeUserEverywhere(bot, userId);
+      
+      // User added to queue - use startSearch function for animation
+      await startSearch(ctx, bot, userId);
+      return;
     }
 
     if (result.type === "matched") {
-      // Heavy DB operations outside lock
+      // FIX #4: Atomic match safety - check BEFORE async
+      if (bot.runningChats.has(userId) || bot.runningChats.has(result.matchId)) {
+        console.error(`[MATCH] Race condition detected! user1=${userId}, user2=${result.matchId}`);
+        return ctx.reply("⏳ Connection failed. Please try again.");
+      }
+      
+      // Immediately add to runningChats (BEFORE any async)
+      bot.runningChats.set(userId, result.matchId);
+      bot.runningChats.set(result.matchId, userId);
+      
+      // Update search UI to show "Partner found!" BEFORE heavy operations
+      await onMatchFound(bot, userId);
+      
       const chatStartTime = Date.now();
       await updateUser(userId, { lastPartner: result.matchId, chatStartTime });
       await updateUser(result.matchId, { lastPartner: userId, chatStartTime });
@@ -215,9 +227,17 @@ export default {
       const matchSent = await sendMessageWithRetry(bot, result.matchId, matchPartnerInfo);
       if (!matchSent) {
         const partnerStillThere = bot.runningChats.has(result.matchId);
+        
+        // FIX #7: Running chat cleanup on error
+        bot.runningChats.delete(userId);
+        bot.runningChats.delete(result.matchId);
+        
         await endChatDueToError(bot, userId, result.matchId);
 
         if (partnerStillThere) {
+          // FIX #6: Ensure queue consistency after error
+          removeUserEverywhere(bot, userId);
+          
           const requeued = await bot.addToQueueAtomic({
             id: userId,
             preference: result.preference,
@@ -237,6 +257,18 @@ export default {
         return ctx.reply("⏳ Could not connect to partner. They may have left or restricted the bot.");
       }
 
+      // FIX #5: setTimeout BUG - wrap in runningChats check
+      setTimeout(() => {
+        // Verify both users are still in runningChats before sending
+        if (!bot.runningChats.has(userId) || !bot.runningChats.has(result.matchId)) {
+          console.log(`[MATCH] Skipping connection message - user no longer in chat`);
+          return;
+        }
+        
+        sendConnectionMessage(bot, userId);
+        sendConnectionMessage(bot, result.matchId);
+      }, 1200);
+      
       // Yield to event loop before final message
       await new Promise(resolve => setTimeout(resolve, 5));
 
