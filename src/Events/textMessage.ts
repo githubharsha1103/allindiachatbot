@@ -3,7 +3,7 @@ import { Event } from "../Utils/eventHandler";
 import { ExtraTelegraf } from "..";
 import { Message, Update, ChatAction } from "telegraf/types";
 import { updateUser, getUser, getAllUsers, updateLastActive } from "../storage/db";
-import { isBotBlockedError, cleanupBlockedUser, cleanupBlockedUserAsync, isNotEnoughRightsError, isRateLimitError, getRetryDelay, broadcastWithRateLimit } from "../Utils/telegramErrorHandler";
+import { isBotBlockedError, cleanupBlockedUser, isNotEnoughRightsError, isRateLimitError, getRetryDelay, broadcastWithRateLimit } from "../Utils/telegramErrorHandler";
 import { waitingForBroadcast, waitingForUserId } from "../Commands/adminaccess";
 import { showUserDetails } from "../Commands/adminaccess";
 import { waitingForAge } from "../Utils/actionHandler";
@@ -216,16 +216,9 @@ export default {
     if (!bot.runningChats.has(ctx.from.id)) {
       // Check if user is in waiting queue
       if (bot.queueSet.has(ctx.from.id)) {
-        // Handle case where user has blocked the bot
-        try {
-          return await ctx.reply(
-            "⏳ Waiting for a partner...\n\nUse /end to cancel."
-          );
-        } catch {
-          // User blocked the bot - remove from queue silently
-          await cleanupBlockedUserAsync(bot, ctx.from.id);
-          return; // Don't throw error to user
-        }
+        // User is in queue - use startSearch to show animated search UI
+        // (No need to send extra message - user already in search UI)
+        return;
       }
 
       /* ================================

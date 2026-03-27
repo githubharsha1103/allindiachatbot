@@ -249,9 +249,8 @@ export default {
             return ctx.reply("⏳ Temporary connection issue. Please try /search again.");
           }
 
-          return ctx.reply(
-            "⏳ Temporary connection issue with partner. You've been added back to the queue...\n⏳ Waiting for a new partner..."
-          );
+          // User re-added to queue - use startSearch for animated UI
+          return await startSearch(ctx, bot, userId);
         }
 
         return ctx.reply("⏳ Could not connect to partner. They may have left or restricted the bot.");

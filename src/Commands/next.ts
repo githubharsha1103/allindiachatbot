@@ -8,7 +8,8 @@ import {
   clearChatRuntime,
   exitChatKeyboard
 } from "../Utils/chatFlow";
-import { cleanupBlockedUser, cleanupBlockedUserAsync, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
+import { cleanupBlockedUser, endChatDueToError, sendMessageWithRetry } from "../Utils/telegramErrorHandler";
+import { startSearch } from "../Utils/actionHandler";
 import { isPremium as checkPremiumStatus } from "../Utils/starsPayments";
 import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit, RATE_LIMIT_MESSAGE } from "../index";
 
@@ -118,14 +119,9 @@ export default {
           if (!added) {
             return ctx.reply("⚠️ You are already in the queue!");
           }
-          // Handle case where user has blocked the bot
-          try {
-            return await ctx.reply("⏳ Waiting for a partner...");
-          } catch {
-            // User blocked the bot - remove from queue and notify
-            await cleanupBlockedUserAsync(bot, userId);
-            return ctx.reply("⚠️ Unable to send message. You may have blocked the bot.");
-          }
+          // User added to queue - use startSearch for animated UI
+          // (No need to handle blocked case - user already sees search UI if they block)
+          return await startSearch(ctx, bot, userId);
         }
 
         const matchId = matchResult.partnerId;
@@ -156,7 +152,8 @@ export default {
             if (!added) {
               return ctx.reply("⚠️ You are already in the queue!");
             }
-            return ctx.reply("⏳ Waiting for a partner...");
+            // User re-added to queue - use startSearch for animated UI
+            return await startSearch(ctx, bot, userId);
           }
         }
 
@@ -188,9 +185,8 @@ export default {
               return ctx.reply("⏳ Temporary connection issue. Please try /next again.");
             }
 
-            return ctx.reply(
-              "⏳ Temporary connection issue with partner. You've been added back to the queue...\n⏳ Waiting for a new partner..."
-            );
+            // User re-added to queue - use startSearch for animated UI
+            return await startSearch(ctx, bot, userId);
           }
 
           return ctx.reply("⏳ Could not connect to partner. They may have left or restricted the bot.");
