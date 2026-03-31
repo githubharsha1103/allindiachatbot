@@ -14,9 +14,11 @@ export const exitChatKeyboard = Markup.inlineKeyboard([
 ]);
 
 export function buildPartnerMatchMessage(viewerIsPremium: boolean, partner: PartnerProfile): string {
-    const partnerGender = viewerIsPremium && partner.gender
-        ? partner.gender.charAt(0).toUpperCase() + partner.gender.slice(1)
-        : "🔒 Hidden";
+    const partnerGender = viewerIsPremium
+        ? (partner.gender
+            ? partner.gender.charAt(0).toUpperCase() + partner.gender.slice(1)
+            : "Not Set")
+        : "🔒 Available with Premium";
     const partnerAge = partner.age || "Not Set";
     const partnerState = partner.state
         ? ` - ${partner.state.charAt(0).toUpperCase() + partner.state.slice(1)}`

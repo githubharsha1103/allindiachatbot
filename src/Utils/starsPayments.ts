@@ -10,7 +10,7 @@ const invoiceCooldown = new Map<number, number>();
 // Cache to prevent duplicate admin notifications (30 second window)
 const notifiedPaymentsCache = new Map<string, number>();
 const NOTIFICATION_CACHE_TTL = 30000;
-const COOLDOWN_MS = 30000; // 30 seconds
+const COOLDOWN_MS = 10000; // 10 seconds
 const COOLDOWN_CLEANUP_MS = 10 * 60 * 1000; // 10 minutes
 
 // Maximum number of processed payment charge IDs to keep (exported for reference)
@@ -423,28 +423,34 @@ export function initStarsPaymentHandlers(bot: ExtraTelegraf): void {
 
   // Invoice creation with rate limiting
   bot.action(/premium_(daily|weekly|monthly|yearly)/, async (ctx) => {
-    await ctx.answerCbQuery();
-    
+    const now = Date.now();
     const userId = ctx.from?.id || 0;
     const lastInvoice = invoiceCooldown.get(userId);
 
-    if (lastInvoice && Date.now() - lastInvoice < COOLDOWN_MS) {
-      await ctx.reply("Please wait before creating another invoice.");
+    if (lastInvoice && now - lastInvoice < COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((COOLDOWN_MS - (now - lastInvoice)) / 1000);
+      await ctx.answerCbQuery(`Please wait ${waitSeconds}s before creating another invoice.`, {
+        show_alert: true
+      });
       return;
     }
-
-    invoiceCooldown.set(userId, Date.now());
 
     const match = ctx.match as RegExpExecArray | undefined;
     const payload = match ? `premium_${match[1]}` : "";
     const plan = getPlanFromPayload(payload);
 
     if (!plan) {
-      await ctx.reply("Invalid premium plan. Please try again.");
+      await ctx.answerCbQuery("Invalid premium plan. Please try again.", {
+        show_alert: true
+      });
       return;
     }
 
-    await createPremiumInvoice(ctx, plan);
+    await ctx.answerCbQuery();
+    const created = await createPremiumInvoice(ctx, plan);
+    if (created) {
+      invoiceCooldown.set(userId, Date.now());
+    }
   });
 }
 

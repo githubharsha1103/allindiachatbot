@@ -173,6 +173,21 @@ export async function startWebServer(
   }
 
   const webhookUrl = `${domain}${WEBHOOK_PATH}`;
+  const allowedUpdates = [
+    "message",
+    "callback_query",
+    "pre_checkout_query",
+    "chat_member",
+    "my_chat_member",
+    "chat_join_request",
+    "inline_query",
+    "chosen_inline_result",
+    "poll",
+    "poll_answer",
+    "edited_message",
+    "channel_post",
+    "edited_channel_post"
+  ] as const;
 
   console.log(`[INFO] - Starting webhook server on port ${port}`);
   console.log(`[INFO] - Webhook URL: ${webhookUrl}`);
@@ -190,8 +205,11 @@ export async function startWebServer(
         console.log("[INFO] - Deleted existing webhook");
 
         // Set new webhook
-        await bot.telegram.setWebhook(webhookUrl);
+        await bot.telegram.setWebhook(webhookUrl, {
+          allowed_updates: allowedUpdates
+        });
         console.log("[INFO] - Webhook set successfully");
+        console.log(`[INFO] - Webhook allowed updates: ${allowedUpdates.join(", ")}`);
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         console.error("[ERROR] - Failed to set webhook:", errorMessage);

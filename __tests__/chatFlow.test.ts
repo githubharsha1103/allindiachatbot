@@ -14,7 +14,7 @@ import {
 } from "../src/Utils/chatFlow";
 
 describe("chatFlow", () => {
-  it("builds match text with hidden gender for non-premium viewers", () => {
+  it("builds match text with premium upsell for non-premium viewers", () => {
     const message = buildPartnerMatchMessage(false, {
       age: "22",
       gender: "female",
@@ -22,7 +22,19 @@ describe("chatFlow", () => {
     });
 
     expect(message).toContain("Age: 22");
-    expect(message).toContain("Gender: 🔒 Hidden");
+    expect(message).toContain("Gender: ");
+    expect(message).toContain("Available with Premium");
+  });
+
+  it("builds match text with visible gender for premium viewers", () => {
+    const message = buildPartnerMatchMessage(true, {
+      age: "24",
+      gender: "male",
+      state: "Kerala"
+    });
+
+    expect(message).toContain("Age: 24");
+    expect(message).toContain("Gender: Male");
   });
 
   it("clears queue and chat runtime consistently", async () => {
