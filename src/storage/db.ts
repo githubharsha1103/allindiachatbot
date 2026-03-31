@@ -711,6 +711,13 @@ export interface Ban {
   banExpiresAt?: number; // For temporary bans (timestamp when ban expires)
 }
 
+export interface ModerationImpactStats {
+  affectedCount: number;
+  warnedCount: number;
+  tempBannedCount: number;
+  bannedCount: number;
+}
+
 type JsonBanMeta = {
   reason?: string;
   bannedAt?: number;
@@ -978,6 +985,127 @@ export async function readBans(): Promise<number[]> {
   
   // Return array of ban IDs from object format
   return Object.keys(bans).map(key => parseInt(key, 10));
+}
+
+/**
+ * Returns current moderation impact counts.
+ * warnedCount: users crossing warn threshold but below temp-ban threshold, excluding currently banned users.
+ * tempBannedCount: users currently under active temporary bans.
+ * bannedCount: users currently under permanent bans.
+ * affectedCount: warned + temp banned + banned (disjoint groups).
+ */
+export async function getModerationImpactStats(
+  warnThreshold: number,
+  tempBanThreshold: number
+): Promise<ModerationImpactStats> {
+  const now = Date.now();
+
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const database = await connectToDatabase();
+      const bansCollection = database.collection<Ban>("bans");
+      const usersCollection = await getUsersCollection();
+
+      const bans = await bansCollection.find(
+        {},
+        { projection: { telegramId: 1, banExpiresAt: 1, _id: 0 } }
+      ).toArray();
+
+      let tempBannedCount = 0;
+      let bannedCount = 0;
+      const activeBannedIds: number[] = [];
+
+      for (const ban of bans) {
+        if (typeof ban.banExpiresAt === "number") {
+          if (ban.banExpiresAt > now) {
+            tempBannedCount += 1;
+            activeBannedIds.push(ban.telegramId);
+          }
+        } else {
+          bannedCount += 1;
+          activeBannedIds.push(ban.telegramId);
+        }
+      }
+
+      const warnedCount = await usersCollection.countDocuments({
+        reports: { $gte: warnThreshold, $lt: tempBanThreshold },
+        telegramId: activeBannedIds.length > 0 ? { $nin: activeBannedIds } : { $exists: true }
+      });
+
+      return {
+        affectedCount: warnedCount + tempBannedCount + bannedCount,
+        warnedCount,
+        tempBannedCount,
+        bannedCount
+      };
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getModerationImpactStats error:", error);
+    }
+  }
+
+  // JSON fallback
+  try {
+    const dbObj = await readJson<JsonUsersDb>(JSON_FILE);
+    const bans = await readJson<JsonBans>(BANS_FILE);
+
+    let tempBannedCount = 0;
+    let bannedCount = 0;
+    const activeBannedUsers = new Set<number>();
+
+    if (Array.isArray(bans)) {
+      for (const id of bans) {
+        activeBannedUsers.add(id);
+      }
+      bannedCount = bans.length;
+    } else if (bans && typeof bans === "object") {
+      for (const [idStr, meta] of Object.entries(bans)) {
+        const id = parseInt(idStr, 10);
+        if (Number.isNaN(id)) continue;
+
+        if (typeof meta?.banExpiresAt === "number") {
+          if (meta.banExpiresAt > now) {
+            tempBannedCount += 1;
+            activeBannedUsers.add(id);
+          }
+        } else {
+          bannedCount += 1;
+          activeBannedUsers.add(id);
+        }
+      }
+    }
+
+    let warnedCount = 0;
+    for (const [userIdStr, data] of Object.entries(dbObj)) {
+      const userId = parseInt(userIdStr, 10);
+      if (Number.isNaN(userId) || activeBannedUsers.has(userId)) {
+        continue;
+      }
+
+      const reportCount = Array.isArray(data.reportHistory)
+        ? data.reportHistory.length
+        : (data.reports || 0);
+
+      if (reportCount >= warnThreshold && reportCount < tempBanThreshold) {
+        warnedCount += 1;
+      }
+    }
+
+    return {
+      affectedCount: warnedCount + tempBannedCount + bannedCount,
+      warnedCount,
+      tempBannedCount,
+      bannedCount
+    };
+  } catch (error) {
+    console.error("[ERROR] - JSON getModerationImpactStats error:", error);
+  }
+
+  return {
+    affectedCount: 0,
+    warnedCount: 0,
+    tempBannedCount: 0,
+    bannedCount: 0
+  };
 }
 
 // ==================== USER MANAGEMENT ====================

@@ -247,6 +247,15 @@ export async function connectAdminToUser(
     }
     
     try {
+        // Ensure queued users can be lock-acquired even if legacy records have no queueStatus.
+        const preLockUser = await getUser(userId);
+        if (!preLockUser) {
+            return { success: false, message: "User not found" };
+        }
+        if (preLockUser.queueStatus !== "waiting") {
+            await updateUser(userId, { queueStatus: "waiting" });
+        }
+
         console.log(`[queueMonitor] Attempting atomic lock for user ${userId}`);
         
         // RACE CONDITION PROTECTION: Try to atomically lock user for connection

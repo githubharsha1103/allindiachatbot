@@ -13,6 +13,7 @@
 import { Context, Markup } from "telegraf";
 import { isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, safeEditMessageText, getErrorMessage } from "../Utils/telegramUi";
+import { getModerationImpactStats } from "../storage/db";
 
 // ==================== Types ====================
 
@@ -413,12 +414,20 @@ export async function showModerationSettings(ctx: Context): Promise<void> {
         await safeAnswerCbQuery(ctx);
         
         const settings = getModerationSettings();
-        
+        const impactStats = await getModerationImpactStats(
+            settings.auto_warn_reports,
+            settings.auto_tempban_reports
+        );
         const enabledStatus = settings.enabled ? "✅ Enabled" : "❌ Disabled";
         
         const message = 
             `🛡️ *Auto Moderation Settings*\n\n` +
             `*Status:* ${enabledStatus}\n\n` +
+            `*Impact:*\n` +
+            `  📊 Affected Users: ${impactStats.affectedCount}\n` +
+            `  ⚠️ Warned: ${impactStats.warnedCount}\n` +
+            `  ⏱️ Temp Banned: ${impactStats.tempBannedCount}\n` +
+            `  🚫 Banned: ${impactStats.bannedCount}\n\n` +
             `*Thresholds:*\n` +
             `  ⚠️ Auto-Warn: ${settings.auto_warn_reports} reports\n` +
             `  ⏱️ Auto-Temp-Ban: ${settings.auto_tempban_reports} reports\n` +
@@ -548,7 +557,6 @@ export async function handleEditWarnThreshold(ctx: Context): Promise<void> {
         setPendingModerationEdit(adminId, "warn");
         
         const settings = getModerationSettings();
-        
         await safeEditMessageText(
             ctx,
             `✏️ *Edit Warn Threshold*\n\n` +
@@ -583,7 +591,6 @@ export async function handleEditTempBanThreshold(ctx: Context): Promise<void> {
         setPendingModerationEdit(adminId, "tempban");
         
         const settings = getModerationSettings();
-        
         await safeEditMessageText(
             ctx,
             `✏️ *Edit Temp Ban Threshold*\n\n` +
@@ -618,7 +625,6 @@ export async function handleEditBanThreshold(ctx: Context): Promise<void> {
         setPendingModerationEdit(adminId, "ban");
         
         const settings = getModerationSettings();
-        
         await safeEditMessageText(
             ctx,
             `✏️ *Edit Ban Threshold*\n\n` +
@@ -653,7 +659,6 @@ export async function handleEditDuration(ctx: Context): Promise<void> {
         setPendingModerationEdit(adminId, "duration");
         
         const settings = getModerationSettings();
-        
         await safeEditMessageText(
             ctx,
             `✏️ *Edit Temp Ban Duration*\n\n` +
