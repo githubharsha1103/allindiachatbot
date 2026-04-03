@@ -639,13 +639,9 @@ export class ExtraTelegraf extends Telegraf<Context> {
     
     // Get preferences (default to "any" for non-premium or missing)
     const prefA = userA.preference || "any";
-    const statePrefA = userA.statePreference || "any";
     const prefB = userB.preference || "any";
-    const statePrefB = userB.statePreference || "any";
     const genderA = userA.gender || "any";
     const genderB = userB.gender || "any";
-    const stateA = (userA as any).state || "any";
-    const stateB = (userB as any).state || "any";
 
     // Check premium user preferences
     if (userA.isPremium) {

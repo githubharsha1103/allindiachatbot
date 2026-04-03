@@ -418,13 +418,27 @@ const preferenceKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("Female", "PREF_FEMALE")],
     [Markup.button.callback("🔙 Back", "OPEN_SETTINGS")]
 ]);
+// State preference keyboard with all Indian states and territories
 const statePreferenceKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("🌍 Any State", "STATE_PREF_ANY")],
-    [Markup.button.callback("🏛️ Delhi", "STATE_PREF_DELHI")],
-    [Markup.button.callback("🏙️ Maharashtra", "STATE_PREF_MAHARASHTRA")],
-    [Markup.button.callback("🏛️ Karnataka", "STATE_PREF_KARNATAKA")],
-    [Markup.button.callback("🏖️ Kerala", "STATE_PREF_KERALA")],
-    [Markup.button.callback("🕌 Uttar Pradesh", "STATE_PREF_UTTARPRADESH")],
+    [Markup.button.callback("🌴 Andhra Pradesh", "STATE_PREF_AP"), Markup.button.callback("🏔️ Arunachal Pradesh", "STATE_PREF_AR")],
+    [Markup.button.callback("🌺 Assam", "STATE_PREF_AS"), Markup.button.callback("🏛️ Bihar", "STATE_PREF_BR")],
+    [Markup.button.callback("🌲 Chhattisgarh", "STATE_PREF_CG"), Markup.button.callback("🏖️ Goa", "STATE_PREF_GA")],
+    [Markup.button.callback("🏛️ Gujarat", "STATE_PREF_GJ"), Markup.button.callback("🌾 Haryana", "STATE_PREF_HR")],
+    [Markup.button.callback("🏔️ Himachal Pradesh", "STATE_PREF_HP"), Markup.button.callback("🏞️ Jharkhand", "STATE_PREF_JH")],
+    [Markup.button.callback("🏛️ Karnataka", "STATE_PREF_KA"), Markup.button.callback("🌴 Kerala", "STATE_PREF_KL")],
+    [Markup.button.callback("🏛️ Madhya Pradesh", "STATE_PREF_MP"), Markup.button.callback("🏙️ Maharashtra", "STATE_PREF_MH")],
+    [Markup.button.callback("🎭 Manipur", "STATE_PREF_MN"), Markup.button.callback("🌧️ Meghalaya", "STATE_PREF_ML")],
+    [Markup.button.callback("🌲 Mizoram", "STATE_PREF_MZ"), Markup.button.callback("🏔️ Nagaland", "STATE_PREF_NL")],
+    [Markup.button.callback("🏖️ Odisha", "STATE_PREF_OD"), Markup.button.callback("🌾 Punjab", "STATE_PREF_PB")],
+    [Markup.button.callback("🏜️ Rajasthan", "STATE_PREF_RJ"), Markup.button.callback("🏔️ Sikkim", "STATE_PREF_SK")],
+    [Markup.button.callback("🏛️ Tamil Nadu", "STATE_PREF_TN"), Markup.button.callback("🏙️ Telangana", "STATE_PREF_TS")],
+    [Markup.button.callback("🌺 Tripura", "STATE_PREF_TR"), Markup.button.callback("🕌 Uttar Pradesh", "STATE_PREF_UP")],
+    [Markup.button.callback("🏞️ Uttarakhand", "STATE_PREF_UK"), Markup.button.callback("🌉 West Bengal", "STATE_PREF_WB")],
+    [Markup.button.callback("🏛️ Chandigarh", "STATE_PREF_CH"), Markup.button.callback("🏛️ Delhi", "STATE_PREF_DL")],
+    [Markup.button.callback("🏔️ Jammu & Kashmir", "STATE_PREF_JK"), Markup.button.callback("🏔️ Ladakh", "STATE_PREF_LA")],
+    [Markup.button.callback("🏖️ Puducherry", "STATE_PREF_PY"), Markup.button.callback("🏝️ Andaman & Nicobar", "STATE_PREF_AN")],
+    [Markup.button.callback("🌍 Other", "STATE_PREF_OTHER")],
     [Markup.button.callback("⬅️ Back", "OPEN_SETTINGS")]
 ]);
 const mainMenuKeyboard = Markup.inlineKeyboard([
@@ -1562,6 +1576,397 @@ bot.action("STATE_PREF_UTTARPRADESH", async (ctx) => {
     updateUserStatePreferenceInQueue(bot, ctx.from.id, "Uttar Pradesh");
     console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Uttar Pradesh`);
 
+    await showSettings(ctx);
+});
+
+// Additional state preference handlers
+bot.action("STATE_PREF_AP", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Andhra Pradesh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Andhra Pradesh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Andhra Pradesh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_AR", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Arunachal Pradesh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Arunachal Pradesh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Arunachal Pradesh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_AS", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Assam ✅");
+    await updateUser(ctx.from.id, { statePreference: "Assam" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Assam");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_BR", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Bihar ✅");
+    await updateUser(ctx.from.id, { statePreference: "Bihar" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Bihar");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_CG", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Chhattisgarh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Chhattisgarh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Chhattisgarh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_GA", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Goa ✅");
+    await updateUser(ctx.from.id, { statePreference: "Goa" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Goa");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_GJ", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Gujarat ✅");
+    await updateUser(ctx.from.id, { statePreference: "Gujarat" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Gujarat");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_HR", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Haryana ✅");
+    await updateUser(ctx.from.id, { statePreference: "Haryana" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Haryana");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_HP", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Himachal Pradesh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Himachal Pradesh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Himachal Pradesh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_JH", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Jharkhand ✅");
+    await updateUser(ctx.from.id, { statePreference: "Jharkhand" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Jharkhand");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_MP", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Madhya Pradesh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Madhya Pradesh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Madhya Pradesh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_MN", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Manipur ✅");
+    await updateUser(ctx.from.id, { statePreference: "Manipur" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Manipur");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_ML", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Meghalaya ✅");
+    await updateUser(ctx.from.id, { statePreference: "Meghalaya" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Meghalaya");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_MZ", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Mizoram ✅");
+    await updateUser(ctx.from.id, { statePreference: "Mizoram" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Mizoram");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_NL", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Nagaland ✅");
+    await updateUser(ctx.from.id, { statePreference: "Nagaland" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Nagaland");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_OD", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Odisha ✅");
+    await updateUser(ctx.from.id, { statePreference: "Odisha" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Odisha");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_PB", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Punjab ✅");
+    await updateUser(ctx.from.id, { statePreference: "Punjab" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Punjab");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_RJ", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Rajasthan ✅");
+    await updateUser(ctx.from.id, { statePreference: "Rajasthan" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Rajasthan");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_SK", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Sikkim ✅");
+    await updateUser(ctx.from.id, { statePreference: "Sikkim" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Sikkim");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_TN", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Tamil Nadu ✅");
+    await updateUser(ctx.from.id, { statePreference: "Tamil Nadu" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Tamil Nadu");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_TS", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Telangana ✅");
+    await updateUser(ctx.from.id, { statePreference: "Telangana" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Telangana");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_TR", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Tripura ✅");
+    await updateUser(ctx.from.id, { statePreference: "Tripura" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Tripura");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_UK", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Uttarakhand ✅");
+    await updateUser(ctx.from.id, { statePreference: "Uttarakhand" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Uttarakhand");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_WB", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: West Bengal ✅");
+    await updateUser(ctx.from.id, { statePreference: "West Bengal" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "West Bengal");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_CH", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Chandigarh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Chandigarh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Chandigarh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_JK", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Jammu & Kashmir ✅");
+    await updateUser(ctx.from.id, { statePreference: "Jammu & Kashmir" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Jammu & Kashmir");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_LA", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Ladakh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Ladakh" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Ladakh");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_PY", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Puducherry ✅");
+    await updateUser(ctx.from.id, { statePreference: "Puducherry" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Puducherry");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_AN", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Andaman & Nicobar ✅");
+    await updateUser(ctx.from.id, { statePreference: "Andaman & Nicobar" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Andaman & Nicobar");
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_OTHER", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+    await safeAnswerCbQuery(ctx, "State preference saved: Other ✅");
+    await updateUser(ctx.from.id, { statePreference: "Other" });
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Other");
     await showSettings(ctx);
 });
 

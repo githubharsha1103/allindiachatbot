@@ -64,11 +64,26 @@ export const indianLocationOptions: readonly LocationOption[] = [
 
 export const locationValues = indianLocationOptions.map((option) => option.storedValue);
 
+// State emoji mapping for visual appeal
+const stateEmojis: Record<string, string> = {
+    "AP": "🌴", "AR": "🏔️", "AS": "🌺", "BR": "🏛️", "CG": "🌲", "GA": "🏖️",
+    "GJ": "🏛️", "HR": "🌾", "HP": "🏔️", "JH": "🏞️", "KA": "🏛️", "KL": "🌴",
+    "MP": "🏛️", "MH": "🏙️", "MN": "🎭", "ML": "🌧️", "MZ": "🌲", "NL": "🏔️",
+    "OD": "🏖️", "PB": "🌾", "RJ": "🏜️", "SK": "🏔️", "TN": "🏛️", "TS": "🏙️",
+    "TR": "🌺", "UP": "🕌", "UK": "🏞️", "WB": "🌉", "AN": "🏝️", "CH": "🏛️",
+    "DL": "🏛️", "JK": "🏔️", "LA": "🏔️", "PY": "🏖️", "OTHER": "🌍",
+    "DNDD": "🏖️", "LD": "🏝️"
+};
+
 function buildLocationKeyboard(callbackPrefix: string, backCallback?: string) {
     const rows = [];
     for (let i = 0; i < indianLocationOptions.length; i += 2) {
-        const button1 = Markup.button.callback(indianLocationOptions[i].name, `${callbackPrefix}${indianLocationOptions[i].code}`);
-        const button2 = i + 1 < indianLocationOptions.length ? Markup.button.callback(indianLocationOptions[i + 1].name, `${callbackPrefix}${indianLocationOptions[i + 1].code}`) : null;
+        const emoji1 = stateEmojis[indianLocationOptions[i].code] || "📍";
+        const emoji2 = i + 1 < indianLocationOptions.length ? stateEmojis[indianLocationOptions[i + 1].code] || "📍" : null;
+
+        const button1 = Markup.button.callback(`${emoji1} ${indianLocationOptions[i].name}`, `${callbackPrefix}${indianLocationOptions[i].code}`);
+        const button2 = i + 1 < indianLocationOptions.length ? Markup.button.callback(`${emoji2} ${indianLocationOptions[i + 1].name}`, `${callbackPrefix}${indianLocationOptions[i + 1].code}`) : null;
+
         if (button2) {
             rows.push([button1, button2]);
         } else {
