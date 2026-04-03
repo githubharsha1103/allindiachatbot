@@ -65,9 +65,16 @@ export const indianLocationOptions: readonly LocationOption[] = [
 export const locationValues = indianLocationOptions.map((option) => option.storedValue);
 
 function buildLocationKeyboard(callbackPrefix: string, backCallback?: string) {
-    const rows = indianLocationOptions.map((option) => [
-        Markup.button.callback(option.name, `${callbackPrefix}${option.code}`)
-    ]);
+    const rows = [];
+    for (let i = 0; i < indianLocationOptions.length; i += 2) {
+        const button1 = Markup.button.callback(indianLocationOptions[i].name, `${callbackPrefix}${indianLocationOptions[i].code}`);
+        const button2 = i + 1 < indianLocationOptions.length ? Markup.button.callback(indianLocationOptions[i + 1].name, `${callbackPrefix}${indianLocationOptions[i + 1].code}`) : null;
+        if (button2) {
+            rows.push([button1, button2]);
+        } else {
+            rows.push([button1]);
+        }
+    }
 
     if (backCallback) {
         rows.push([Markup.button.callback("⬅️ Back", backCallback)]);
