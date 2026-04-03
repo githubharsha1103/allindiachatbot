@@ -1,7 +1,7 @@
 import { Context } from "telegraf";
 import { Command } from "../Utils/commandHandler";
 
-const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/teluguanomychat";
+const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1";
 
 interface ChatWithTitle {
     title?: string;

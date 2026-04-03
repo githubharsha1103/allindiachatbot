@@ -97,12 +97,12 @@ export default {
       }
     }
 
-    const groupInviteLink = process.env.GROUP_INVITE_LINK || "https://t.me/teluguanomychat";
+    const groupInviteLink = process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1";
     await ctx.reply(
       "🌟 <b>Welcome back!</b> 🌟\n\n" +
         "This bot helps you chat anonymously with people worldwide.\n\n" +
-        "📢 <b>Join our community group!</b>\n" +
-        "Meet more people and stay updated!\n" +
+        "📢 Want to join our community group?\n" +
+        "Join to meet more people and stay updated!\n" +
         `👉 ${groupInviteLink}\n\n` +
         "Use the commands below to navigate:",
       {
