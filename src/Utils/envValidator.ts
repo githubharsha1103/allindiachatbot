@@ -5,8 +5,8 @@
 
 interface EnvConfig {
   BOT_TOKEN: string;
-  ADMIN_IDS: string;
-  GROUP_CHAT_ID: string;
+  ADMIN_IDS?: string;
+  GROUP_CHAT_ID?: string;
   MONGODB_URI?: string;
   PORT?: string;
   WEBHOOK_PATH?: string;
@@ -19,8 +19,8 @@ interface EnvConfig {
   STARS_PREMIUM_YEARLY?: string;
 }
 
-const requiredEnv: (keyof EnvConfig)[] = ["BOT_TOKEN", "ADMIN_IDS", "GROUP_CHAT_ID"];
-const recommendedEnv: (keyof EnvConfig)[] = ["MONGODB_URI", "GROUP_INVITE_LINK"];
+const requiredEnv: (keyof EnvConfig)[] = ["BOT_TOKEN"];
+const recommendedEnv: (keyof EnvConfig)[] = ["MONGODB_URI"];
 
 /**
  * Check if running in test environment
@@ -88,9 +88,6 @@ export function validateEnvironment(): void {
     console.warn("[WARN] - This may degrade performance and reliability for production use.");
   }
 
-  validateAdminIds();
-  validateGroupChatId();
-  validateWebhookUrl();
   validateStarsPricing();
 }
 
