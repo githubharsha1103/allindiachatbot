@@ -57,10 +57,14 @@ export function validateEnvironment(): void {
 
   // Detect production mode
   if (isProduction()) {
-    console.log("[INFO] - Running in PRODUCTION mode (webhook)");
-    if (!process.env.WEBHOOK_URL && !process.env.RENDER_EXTERNAL_HOSTNAME) {
-      console.error("[FATAL] In production mode but WEBHOOK_URL or RENDER_EXTERNAL_HOSTNAME not set");
-      process.exit(1);
+    console.log("[INFO] - Running in PRODUCTION mode (long polling)");
+    
+    // Optional: Check for webhook URL if user wants webhooks
+    const webhookUrl = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
+    if (webhookUrl && webhookUrl !== "https://") {
+      console.log("[INFO] - Webhook URL detected, will use webhooks");
+    } else {
+      console.log("[INFO] - No webhook URL detected, using long polling");
     }
     
     // Check for WEB_API_KEY in production (required for admin API)
@@ -94,7 +98,7 @@ export function validateEnvironment(): void {
  * Check if running in production mode (webhook)
  */
 export const isProduction = (): boolean => {
-  return !!(process.env.RENDER_EXTERNAL_HOSTNAME || process.env.WEBHOOK_URL);
+  return process.env.NODE_ENV === "production";
 };
 
 function validateAdminIds(): void {

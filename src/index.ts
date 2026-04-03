@@ -1239,9 +1239,18 @@ const PORT = parseInt(process.env.PORT || "3000", 10);
 if (process.env.NODE_ENV === "test") {
   console.log("[INFO] - Test mode detected. Bot launch skipped.");
 } else if (isProduction()) {
-  // Production: Use webhooks
-  const app = createWebServer(bot);
-  startWebServer(app, bot, PORT);
+  // Production: Use webhooks if URL is provided, otherwise use long polling
+  const webhookUrl = process.env.WEBHOOK_URL || `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
+  
+  if (webhookUrl && webhookUrl !== "https://") {
+    // Use webhooks if URL is available
+    const app = createWebServer(bot);
+    startWebServer(app, bot, PORT);
+  } else {
+    // No webhook URL - use long polling for production
+    console.log("[INFO] - No webhook URL detected, using long polling for production");
+    bot.launch();
+  }
 } else {
   // Development: Use long polling
   console.log("[INFO] - Using long polling (local development)");
