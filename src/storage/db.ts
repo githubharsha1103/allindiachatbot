@@ -344,9 +344,10 @@ async function connectToDatabase(): Promise<Db> {
       console.log("[INFO] - Connected to MongoDB");
       
       // Create indexes
-      await db.collection<User>("users").createIndex({ telegramId: 1 }, { unique: true });
-      await db.collection<User>("users").createIndex({ referralCode: 1 });
-      await db.collection<User>("users").createIndex({ referredBy: 1 });
+      const usersCollection = db.collection<User>("users");
+      await usersCollection.createIndex({ telegramId: 1 }, { unique: true });
+      await usersCollection.createIndex({ referralCode: 1 });
+      await usersCollection.createIndex({ referredBy: 1 });
       
       // Reports collection indexes for scalable report system
       await db.collection<Report>("reports").createIndex({ reportedUser: 1 }, { name: "report_user_idx" });
@@ -357,23 +358,34 @@ async function connectToDatabase(): Promise<Db> {
       await db.collection("bans").createIndex({ telegramId: 1 }, { name: "ban_telegram_idx", unique: true });
       
       // Performance indexes for admin commands and partner matching
-      await db.collection<User>("users").createIndex(
+      await usersCollection.createIndex(
         { lastActive: -1, banned: 1 },
         { name: "admin_broadcast_idx" }
       );
-      await db.collection<User>("users").createIndex(
+      await usersCollection.createIndex(
         { reports: -1 },
         { name: "reports_idx" }
       );
-      await db.collection<User>("users").createIndex(
+
+      const indexes = await usersCollection.indexes();
+      const existingPartnerMatchIndex = indexes.find((index) => index.name === "partner_match_idx");
+
+      if (existingPartnerMatchIndex) {
+        const keys = Object.keys(existingPartnerMatchIndex.key);
+        if (!keys.includes("statePreference")) {
+          await usersCollection.dropIndex("partner_match_idx");
+        }
+      }
+
+      await usersCollection.createIndex(
         { gender: 1, preference: 1, statePreference: 1, premium: 1, banned: 1 },
         { name: "partner_match_idx" }
       );
-      await db.collection<User>("users").createIndex(
+      await usersCollection.createIndex(
         { premium: 1, premiumExpiry: 1 },
         { name: "premium_idx" }
       );
-      await db.collection<User>("users").createIndex(
+      await usersCollection.createIndex(
         { state: 1, gender: 1 },
         { name: "location_gender_idx" }
       );
