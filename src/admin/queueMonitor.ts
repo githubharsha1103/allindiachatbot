@@ -37,6 +37,7 @@ export interface QueueUser {
     id: number;
     gender: string;
     preference: string;
+    statePreference: string;
     isPremium: boolean;
 }
 
@@ -64,6 +65,7 @@ export async function getQueueFromDB(bot: ExtraTelegraf): Promise<{ waiting: Que
                 id: user.id,
                 gender: dbUser.gender || user.gender || "unknown",
                 preference: dbUser.preference || user.preference || "any",
+                statePreference: dbUser.statePreference || "any",
                 isPremium: false
             });
         } catch (error) {
@@ -73,6 +75,7 @@ export async function getQueueFromDB(bot: ExtraTelegraf): Promise<{ waiting: Que
                 id: user.id,
                 gender: user.gender || "unknown",
                 preference: user.preference || "any",
+                statePreference: "any",
                 isPremium: false
             });
         }
@@ -86,6 +89,7 @@ export async function getQueueFromDB(bot: ExtraTelegraf): Promise<{ waiting: Que
                 id: user.id,
                 gender: dbUser.gender || user.gender || "unknown",
                 preference: dbUser.preference || user.preference || "any",
+                statePreference: dbUser.statePreference || "any",
                 isPremium: true
             });
         } catch (error) {
@@ -95,6 +99,7 @@ export async function getQueueFromDB(bot: ExtraTelegraf): Promise<{ waiting: Que
                 id: user.id,
                 gender: user.gender || "unknown",
                 preference: user.preference || "any",
+                statePreference: "any",
                 isPremium: true
             });
         }
@@ -115,12 +120,32 @@ export function updateUserPreferenceInQueue(bot: ExtraTelegraf, userId: number, 
         waitingUser.preference = newPreference;
         console.log(`[queueMonitor] Updated preference for user ${userId} in waiting queue: ${newPreference}`);
     }
-    
+
     // Update in premium queue
     const premiumUser = bot.premiumQueue.find((u: { id: number }) => u.id === userId);
     if (premiumUser) {
         premiumUser.preference = newPreference;
         console.log(`[queueMonitor] Updated preference for user ${userId} in premium queue: ${newPreference}`);
+    }
+}
+
+/**
+ * Update user's state preference in queue when they change it.
+ * This ensures the in-memory queue reflects the latest state preference from DB.
+ */
+export function updateUserStatePreferenceInQueue(bot: ExtraTelegraf, userId: number, newStatePreference: string): void {
+    // Update in waiting queue
+    const waitingUser = bot.waitingQueue.find((u: { id: number }) => u.id === userId);
+    if (waitingUser) {
+        (waitingUser as any).statePreference = newStatePreference;
+        console.log(`[queueMonitor] Updated state preference for user ${userId} in waiting queue: ${newStatePreference}`);
+    }
+
+    // Update in premium queue
+    const premiumUser = bot.premiumQueue.find((u: { id: number }) => u.id === userId);
+    if (premiumUser) {
+        (premiumUser as any).statePreference = newStatePreference;
+        console.log(`[queueMonitor] Updated state preference for user ${userId} in premium queue: ${newStatePreference}`);
     }
 }
 

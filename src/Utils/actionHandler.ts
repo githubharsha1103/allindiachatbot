@@ -19,7 +19,7 @@ import {
 } from "./setupFlow";
 import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
 import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
-import { updateUserPreferenceInQueue } from "../admin/queueMonitor";
+import { updateUserPreferenceInQueue, updateUserStatePreferenceInQueue } from "../admin/queueMonitor";
 
 // Valid preference options
 export const genderOptions = ["male", "female", "any"] as const;
@@ -418,6 +418,15 @@ const preferenceKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("Female", "PREF_FEMALE")],
     [Markup.button.callback("🔙 Back", "OPEN_SETTINGS")]
 ]);
+const statePreferenceKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("🌍 Any State", "STATE_PREF_ANY")],
+    [Markup.button.callback("🏛️ Delhi", "STATE_PREF_DELHI")],
+    [Markup.button.callback("🏙️ Maharashtra", "STATE_PREF_MAHARASHTRA")],
+    [Markup.button.callback("🏛️ Karnataka", "STATE_PREF_KARNATAKA")],
+    [Markup.button.callback("🏖️ Kerala", "STATE_PREF_KERALA")],
+    [Markup.button.callback("🕌 Uttar Pradesh", "STATE_PREF_UTTARPRADESH")],
+    [Markup.button.callback("⬅️ Back", "OPEN_SETTINGS")]
+]);
 const mainMenuKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("🔍 Find Partner", "START_SEARCH")],
     [Markup.button.callback("⚙️ Settings", "OPEN_SETTINGS")],
@@ -487,23 +496,25 @@ export async function showSettings(ctx: ActionContext) {
 
     const text =
     `⚙️ Settings
- 
- 👤 Gender: ${genderDisplay}
- 🎂 Age: ${u.age ?? "Not Set"}
- 📍 State: ${u.state ?? "Not Set"}
- 💕 Preference: ${u.premium ? (u.preference === "any" ? "Any" : u.preference === "male" ? "Male" : "Female") : "🔒 Premium Only"}
- 💎 Premium: ${u.premium ? "Yes ✅" : "No ❌"}
- 🚫 Blocked Users: ${(u.blockedUsers || []).length}
-  💬 Chats: Unlimited
- 👥 Referrals: ${referralCount}/30
 
- Use buttons below to update:`;
+  👤 Gender: ${genderDisplay}
+  🎂 Age: ${u.age ?? "Not Set"}
+  📍 State: ${u.state ?? "Not Set"}
+  💕 Gender Preference: ${u.premium ? (u.preference === "any" ? "Any" : u.preference === "male" ? "Male" : "Female") : "🔒 Premium Only"}
+  🌍 State Preference: ${u.premium ? (u.statePreference === "any" ? "Any" : u.statePreference) : "🔒 Premium Only"}
+  💎 Premium: ${u.premium ? "Yes ✅" : "No ❌"}
+  🚫 Blocked Users: ${(u.blockedUsers || []).length}
+   💬 Chats: Unlimited
+  👥 Referrals: ${referralCount}/30
+
+  Use buttons below to update:`;
 
     const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback("👤 Gender", "SET_GENDER")],
         [Markup.button.callback("🎂 Age", "SET_AGE")],
         [Markup.button.callback("📍 State", "SET_STATE")],
-        [Markup.button.callback("💕 Preference", "SET_PREFERENCE")],
+        [Markup.button.callback("💕 Gender Preference", "SET_PREFERENCE")],
+        [Markup.button.callback("🌍 State Preference", "SET_STATE_PREFERENCE")],
         [Markup.button.callback("🚫 Blocked Users", "OPEN_BLOCKED_USERS")],
         [Markup.button.callback("🎁 Referrals", "OPEN_REFERRAL")],
         [Markup.button.callback("⭐ Premium", "BUY_PREMIUM")]
@@ -1297,7 +1308,7 @@ for (const option of indianLocationOptions) {
 bot.action("SET_PREFERENCE", async (ctx) => {
     if (!ctx.from) return;
     const user = await getUser(ctx.from.id);
-    
+
     // Use isPremium to check both premium flag AND expiry
     if (!isPremium(user)) {
         // Show premium message for non-premium users
@@ -1307,7 +1318,8 @@ bot.action("SET_PREFERENCE", async (ctx) => {
             "This feature is available for Premium users only.\n\n" +
             "✨ *Premium Benefits:*\n" +
             "• Set gender preference (Male/Female)\n" +
-            "• See partner's gender\n" +
+            "• Set state preference\n" +
+            "• See partner's gender and state\n" +
             "• Better profile control\n" +
             "• And more!\n\n" +
             "📞 Contact admin @demonhunter1511 to purchase\n" +
@@ -1316,9 +1328,38 @@ bot.action("SET_PREFERENCE", async (ctx) => {
             { parse_mode: "Markdown" }
         );
     }
-    
+
     await safeAnswerCbQuery(ctx);
     await safeEditMessageText(ctx, "Select your gender preference:", preferenceKeyboard);
+});
+
+// State preference action - check premium status and show state selection
+bot.action("SET_STATE_PREFERENCE", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        // Show premium message for non-premium users
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(
+            "🌍 *State Preference - Premium Only*\n\n" +
+            "This feature is available for Premium users only.\n\n" +
+            "✨ *Premium Benefits:*\n" +
+            "• Set gender preference (Male/Female)\n" +
+            "• Set state preference\n" +
+            "• See partner's gender and state\n" +
+            "• Better profile control\n" +
+            "• And more!\n\n" +
+            "📞 Contact admin @demonhunter1511 to purchase\n" +
+            "🎁 Or use /settings → Referrals to earn free Premium!\n\n" +
+            "💳 *Payment Issues?* Contact @demonhunter1511",
+            { parse_mode: "Markdown" }
+        );
+    }
+
+    await safeAnswerCbQuery(ctx);
+    await safeEditMessageText(ctx, "Select your preferred state for matching:", statePreferenceKeyboard);
 });
 
 // Premium check for preference selection
@@ -1400,6 +1441,127 @@ bot.action("PREF_FEMALE", async (ctx) => {
     updateUserPreferenceInQueue(bot, ctx.from.id, preference);
     console.log(`[queueMonitor] User ${ctx.from.id} updated preference to: ${preference}`);
     
+    await showSettings(ctx);
+});
+
+// State preference actions - premium only
+bot.action("STATE_PREF_ANY", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Any ✅");
+    await updateUser(ctx.from.id, { statePreference: "any" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "any");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: any`);
+
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_DELHI", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Delhi ✅");
+    await updateUser(ctx.from.id, { statePreference: "Delhi" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Delhi");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Delhi`);
+
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_MAHARASHTRA", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Maharashtra ✅");
+    await updateUser(ctx.from.id, { statePreference: "Maharashtra" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Maharashtra");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Maharashtra`);
+
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_KARNATAKA", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Karnataka ✅");
+    await updateUser(ctx.from.id, { statePreference: "Karnataka" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Karnataka");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Karnataka`);
+
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_KERALA", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Kerala ✅");
+    await updateUser(ctx.from.id, { statePreference: "Kerala" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Kerala");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Kerala`);
+
+    await showSettings(ctx);
+});
+
+bot.action("STATE_PREF_UTTARPRADESH", async (ctx) => {
+    if (!ctx.from) return;
+    const user = await getUser(ctx.from.id);
+
+    // Use isPremium to check both premium flag AND expiry
+    if (!isPremium(user)) {
+        await safeAnswerCbQuery(ctx);
+        return ctx.reply(premiumPreferenceMessage, { parse_mode: "Markdown" });
+    }
+
+    await safeAnswerCbQuery(ctx, "State preference saved: Uttar Pradesh ✅");
+    await updateUser(ctx.from.id, { statePreference: "Uttar Pradesh" });
+
+    // Update state preference in queue (memory) to reflect latest value
+    updateUserStatePreferenceInQueue(bot, ctx.from.id, "Uttar Pradesh");
+    console.log(`[queueMonitor] User ${ctx.from.id} updated state preference to: Uttar Pradesh`);
+
     await showSettings(ctx);
 });
 

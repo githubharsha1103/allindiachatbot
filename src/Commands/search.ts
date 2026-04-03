@@ -13,7 +13,7 @@ type LockResult =
   | { type: "already_in_chat" }
   | { type: "already_in_queue" }
   | { type: "waiting" }
-  | { type: "matched"; matchId: number; userId: number; preference: string; gender: string; isPremium: boolean; blockedUsers: number[] };
+  | { type: "matched"; matchId: number; userId: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers: number[] };
 
 export async function redirectToSetup(ctx: Context) {
   if (!ctx.from) return null;
@@ -84,6 +84,7 @@ export default {
 
     // Extract user data OUTSIDE the lock callback for use inside
     const preference = user.preference || "any";
+    const statePreference = user.statePreference || "any";
     const gender = user.gender || "any";
     const isPremium = checkPremiumStatus(user);
     const myBlockedUsers = user.blockedUsers || [];
@@ -115,6 +116,7 @@ export default {
           const matchResult = await bot.matchFromQueue(userId, {
             id: userId,
             preference,
+            statePreference,
             gender,
             isPremium,
             blockedUsers: myBlockedUsers
@@ -125,6 +127,7 @@ export default {
             const added = await bot.addToQueueAtomic({
               id: userId,
               preference,
+              statePreference,
               gender,
               isPremium,
               blockedUsers: myBlockedUsers
@@ -141,14 +144,15 @@ export default {
           // Initialize chat runtime
           await beginChatRuntime(bot, userId, matchId);
 
-        return { 
-          type: "matched", 
-          matchId, 
-          userId, 
-          preference, 
-          gender, 
-          isPremium, 
-          blockedUsers: myBlockedUsers 
+        return {
+          type: "matched",
+          matchId,
+          userId,
+          preference,
+          statePreference,
+          gender,
+          isPremium,
+          blockedUsers: myBlockedUsers
         };
       },
       userId,
@@ -226,6 +230,7 @@ export default {
           const requeued = await bot.addToQueueAtomic({
             id: userId,
             preference: result.preference,
+            statePreference: result.statePreference,
             gender: result.gender,
             isPremium: result.isPremium,
             blockedUsers: result.blockedUsers

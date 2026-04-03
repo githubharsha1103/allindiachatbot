@@ -23,6 +23,7 @@ type NextLockResult =
       previousMessageCount: number;
       matchId: number;
       preference: string;
+      statePreference: string;
       gender: string;
       isPremium: boolean;
       blockedUsers: number[];
@@ -68,6 +69,7 @@ export default {
 
     const user = await getUser(userId);
     const preference = user.preference || "any";
+    const statePreference = user.statePreference || "any";
     const gender = user.gender || "any";
     const isPremium = user.premium || false;
     const myBlockedUsers = user.blockedUsers || [];
@@ -87,6 +89,7 @@ export default {
         let matchResult = await bot.matchFromQueue(userId, {
           id: userId,
           preference,
+          statePreference,
           gender,
           isPremium,
           blockedUsers: myBlockedUsers
@@ -104,6 +107,7 @@ export default {
             await bot.addToQueueAtomic({
               id: matchResult.partnerId,
               preference: partnerUser.preference || "any",
+              statePreference: partnerUser.statePreference || "any",
               gender: partnerUser.gender || "any",
               isPremium: partnerUser.premium || false,
               blockedUsers: partnerUser.blockedUsers || []
@@ -112,6 +116,7 @@ export default {
             matchResult = await bot.matchFromQueue(userId, {
               id: userId,
               preference,
+              statePreference,
               gender,
               isPremium,
               blockedUsers: [...myBlockedUsers, matchResult.partnerId]
@@ -123,6 +128,7 @@ export default {
           const added = await bot.addToQueueAtomic({
             id: userId,
             preference,
+            statePreference,
             gender,
             isPremium,
             blockedUsers: myBlockedUsers
@@ -140,6 +146,7 @@ export default {
           previousMessageCount,
           matchId: matchResult.partnerId,
           preference,
+          statePreference,
           gender,
           isPremium,
           blockedUsers: myBlockedUsers
@@ -225,6 +232,7 @@ export default {
         const requeued = await bot.addToQueueAtomic({
           id: userId,
           preference: result.preference,
+          statePreference: result.statePreference,
           gender: refreshedUser.gender || "any",
           isPremium: result.isPremium,
           blockedUsers: refreshedUser.blockedUsers || []

@@ -2642,8 +2642,13 @@ export async function showUserDetails(ctx: Context, userId: number) {
     const referralCount = await getReferralCount(userId);
     
     // Format preference safely
-    const preference = user.premium 
+    const preference = user.premium
       ? (user.preference === "any" ? "Any" : user.preference === "male" ? "Male" : user.preference === "female" ? "Female" : "Any")
+      : "🔒 Premium Only";
+
+    // Format state preference safely
+    const statePreference = user.premium
+      ? (user.statePreference === "any" ? "Any" : user.statePreference || "Any")
       : "🔒 Premium Only";
     
     // Format last active time
@@ -2657,7 +2662,8 @@ export async function showUserDetails(ctx: Context, userId: number) {
         `⚧️ Gender: ${gender}\n` +
         `🎂 Age: ${age}\n` +
         `📍 State: ${state}\n` +
-        `💕 Preference: ${preference}\n` +
+        `💕 Gender Preference: ${preference}\n` +
+        `🌍 State Preference: ${statePreference}\n` +
         `💬 Total Chats: ${totalChats}\n` +
         `👥 Referrals: ${referralCount}\n` +
         `⚠️ Reports: ${reports}\n` +

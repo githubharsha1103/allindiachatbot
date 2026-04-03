@@ -199,9 +199,9 @@ class Mutex {
 }
 
 export class ExtraTelegraf extends Telegraf<Context> {
-  waitingQueue: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
+  waitingQueue: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
   // Premium users queue - gets priority matching
-  premiumQueue: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
+  premiumQueue: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
   // Set for O(1) queue membership checks
   queueSet: Set<number> = new Set();
   premiumQueueSet: Set<number> = new Set();
@@ -535,7 +535,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   // Atomic queue operations - NOW INTERNALLY PROTECTED BY queueMutex
   // These methods handle queueSet internally for O(1) lookups
   // Added internal locking to prevent race conditions even if callers forget to lock
-  async addToQueueAtomic(user: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<boolean> {
+  async addToQueueAtomic(user: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<boolean> {
     await this.queueMutex.acquire();
     try {
       // O(1) check using Set - much faster than array.some()
@@ -567,7 +567,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   // OPTIMIZED: Helper methods for preference-based matching
-  private addToPreferenceMap(user: { id: number; preference: string; gender: string }, isPremium: boolean): void {
+  private addToPreferenceMap(user: { id: number; preference: string; statePreference: string; gender: string }, isPremium: boolean): void {
     const key = `${user.preference || "any"}_${user.gender || "any"}`;
     const map = isPremium ? this.premiumQueueByPreference : this.waitingQueueByPreference;
 
@@ -629,7 +629,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
 
   // Helper: Check if two users can match based on premium status and preferences
   // Non-premium users have implicit "any" preference
-  private canMatch(userA: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }, userB: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): boolean {
+  private canMatch(userA: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }, userB: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): boolean {
     // If either user has blocked the other, no match
     const userABlocked = userA.blockedUsers || [];
     if (userABlocked.includes(userB.id)) return false;
@@ -639,23 +639,29 @@ export class ExtraTelegraf extends Telegraf<Context> {
     
     // Get preferences (default to "any" for non-premium or missing)
     const prefA = userA.preference || "any";
+    const statePrefA = userA.statePreference || "any";
     const prefB = userB.preference || "any";
+    const statePrefB = userB.statePreference || "any";
     const genderA = userA.gender || "any";
     const genderB = userB.gender || "any";
-    
+    const stateA = (userA as any).state || "any";
+    const stateB = (userB as any).state || "any";
+
     // Check premium user preferences
     if (userA.isPremium) {
-      // UserA is premium: their preference must be satisfied by UserB's gender
+      // UserA is premium: their gender preference must be satisfied by UserB's gender
       if (prefA !== "any" && prefA !== genderB) {
         return false;
       }
+      // TODO: Add state preference checking when user states are available in queue objects
     }
-    
+
     if (userB.isPremium) {
-      // UserB is premium: their preference must be satisfied by UserA's gender
+      // UserB is premium: their gender preference must be satisfied by UserA's gender
       if (prefB !== "any" && prefB !== genderA) {
         return false;
       }
+      // TODO: Add state preference checking when user states are available in queue objects
     }
     
     // Both non-premium: always match
@@ -663,7 +669,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   // Find match across both queues with proper preference checking
-  private findMatchInPreferenceMap(user: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }, isPremium: boolean, excludeUserId?: number): number | null {
+  private findMatchInPreferenceMap(user: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }, isPremium: boolean, excludeUserId?: number): number | null {
     const userBlocked = user.blockedUsers || [];
 
     // Collect all candidate IDs from both queues
@@ -722,7 +728,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   // 1. If premiumQueue.length >= 2: match premium users together
   // 2. If premiumQueue.length >= 1 && waitingQueue.length >= 1: match premium with normal
   // 3. Else: match normal users
-  async matchFromQueue(userId: number, matchData: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<{ matched: boolean; partnerId: number | null }> {
+  async matchFromQueue(userId: number, matchData: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<{ matched: boolean; partnerId: number | null }> {
     await this.queueMutex.acquire();
     try {
       let partnerId: number | null = null;
@@ -812,7 +818,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   // Synchronize queue state - ensure array and Set are consistent
   syncQueueState(): void {
     const seenWaiting = new Set<number>();
-    const normalizedWaiting: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
+    const normalizedWaiting: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
 
     for (const queuedUser of this.waitingQueue) {
       if (!queuedUser || seenWaiting.has(queuedUser.id) || this.runningChats.has(queuedUser.id)) {
@@ -824,7 +830,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
     }
 
     const seenPremium = new Set<number>();
-    const normalizedPremium: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
+    const normalizedPremium: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }[] = [];
 
     for (const queuedUser of this.premiumQueue) {
       if (!queuedUser || seenPremium.has(queuedUser.id) || this.runningChats.has(queuedUser.id)) {
@@ -875,7 +881,7 @@ export class ExtraTelegraf extends Telegraf<Context> {
   }
 
   // Add to premium queue - NOW INTERNALLY PROTECTED BY queueMutex
-  async addToPremiumQueue(user: { id: number; preference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<boolean> {
+  async addToPremiumQueue(user: { id: number; preference: string; statePreference: string; gender: string; isPremium: boolean; blockedUsers?: number[] }): Promise<boolean> {
     await this.queueMutex.acquire();
     try {
       if (this.premiumQueueSet.has(user.id)) return false;

@@ -129,6 +129,7 @@ export interface User {
   premium: boolean;
   daily: number;
   preference: string;
+  statePreference: string;
   lastPartner: number | null;
   reportingPartner: number | null;
   reportReason: string | null;
@@ -365,7 +366,7 @@ async function connectToDatabase(): Promise<Db> {
         { name: "reports_idx" }
       );
       await db.collection<User>("users").createIndex(
-        { gender: 1, preference: 1, premium: 1, banned: 1 },
+        { gender: 1, preference: 1, statePreference: 1, premium: 1, banned: 1 },
         { name: "partner_match_idx" }
       );
       await db.collection<User>("users").createIndex(
@@ -512,6 +513,7 @@ export async function getUser(id: number): Promise<UserWithNew> {
           premium: false,
           daily: 0,
           preference: "any",
+          statePreference: "any",
           lastPartner: null,
           reportingPartner: null,
           reportReason: null,
@@ -550,6 +552,7 @@ export async function getUser(id: number): Promise<UserWithNew> {
         premium: false,
         daily: 0,
         preference: "any",
+        statePreference: "any",
         lastPartner: null,
         reportingPartner: null,
         reportReason: null,
