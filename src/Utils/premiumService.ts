@@ -6,7 +6,14 @@
  */
 
 import { updateUser, getUser } from '../storage/db';
-import { bot } from '../index';
+
+function getBotInstance() {
+    try {
+        return require('../index').bot;
+    } catch {
+        return undefined;
+    }
+}
 
 /**
  * Grant premium access to a user
@@ -23,6 +30,7 @@ export async function grantPremium(userId: number, days: number = 30): Promise<{
     });
     
     // Also update in-memory premium users set if bot instance available
+    const bot = getBotInstance();
     if (bot && typeof bot.addPremiumUser === 'function') {
         bot.addPremiumUser(userId);
     }
@@ -46,6 +54,7 @@ export async function grantLifetimePremium(userId: number): Promise<{ success: b
     });
     
     // Also update in-memory premium users set
+    const bot = getBotInstance();
     if (bot && typeof bot.addPremiumUser === 'function') {
         bot.addPremiumUser(userId);
     }
@@ -65,6 +74,7 @@ export async function revokePremium(userId: number): Promise<{ success: boolean 
     });
     
     // Also update in-memory premium users set
+    const bot = getBotInstance();
     if (bot && typeof bot.removePremiumUser === 'function') {
         bot.removePremiumUser(userId);
     }
@@ -98,6 +108,7 @@ export async function extendPremium(userId: number, days: number): Promise<{ suc
     });
     
     // Ensure in-memory cache is updated
+    const bot = getBotInstance();
     if (bot && typeof bot.addPremiumUser === 'function') {
         bot.addPremiumUser(userId);
     }

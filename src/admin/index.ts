@@ -16,6 +16,18 @@ import { ExtraTelegraf } from "../index";
 import { isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, getErrorMessage } from "../Utils/telegramUi";
 
+function parseQueueActionUserId(ctx: Context, prefix: string): number | null {
+    const callbackQuery = ctx.callbackQuery as { data?: string } | undefined;
+    const callbackData = typeof callbackQuery?.data === "string" ? callbackQuery.data : null;
+
+    if (!callbackData || !callbackData.startsWith(prefix)) {
+        return null;
+    }
+
+    const userId = parseInt(callbackData.slice(prefix.length), 10);
+    return Number.isInteger(userId) ? userId : null;
+}
+
 // Export all modules
 export * from "./dashboard";
 export * from "./queueMonitor";
@@ -69,16 +81,14 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
     // Queue remove callback (regex pattern)
     bot.action(/^ADMIN_QUEUE_REMOVE_(\d+)$/, async (ctx: Context) => {
         try {
-            const match = (ctx as unknown as { match?: RegExpMatchArray }).match;
-            if (!match) return;
-            const userId = parseInt(match[1], 10);
+            const userId = parseQueueActionUserId(ctx, "ADMIN_QUEUE_REMOVE_");
+            if (!userId) return;
             
             if (!isAdminContext(ctx)) {
                 await unauthorizedResponse(ctx, "Unauthorized");
                 return;
             }
             
-            await safeAnswerCbQuery(ctx);
             const { handleQueueRemove } = await import("./queueMonitor");
             await handleQueueRemove(ctx, bot, userId);
         } catch (error) {
@@ -90,16 +100,14 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
     // Queue connect callback - connect admin with queued user
     bot.action(/^ADMIN_QUEUE_CONNECT_(\d+)$/, async (ctx: Context) => {
         try {
-            const match = (ctx as unknown as { match?: RegExpMatchArray }).match;
-            if (!match) return;
-            const userId = parseInt(match[1], 10);
+            const userId = parseQueueActionUserId(ctx, "ADMIN_QUEUE_CONNECT_");
+            if (!userId) return;
             
             if (!isAdminContext(ctx)) {
                 await unauthorizedResponse(ctx, "Unauthorized");
                 return;
             }
             
-            await safeAnswerCbQuery(ctx);
             const { handleQueueConnect } = await import("./queueMonitor");
             await handleQueueConnect(ctx, bot, userId);
         } catch (error) {
@@ -111,16 +119,14 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
     // Queue connect confirmation callback
     bot.action(/^ADMIN_QUEUE_CONNECT_CONFIRM_(\d+)$/, async (ctx: Context) => {
         try {
-            const match = (ctx as unknown as { match?: RegExpMatchArray }).match;
-            if (!match) return;
-            const userId = parseInt(match[1], 10);
+            const userId = parseQueueActionUserId(ctx, "ADMIN_QUEUE_CONNECT_CONFIRM_");
+            if (!userId) return;
             
             if (!isAdminContext(ctx)) {
                 await unauthorizedResponse(ctx, "Unauthorized");
                 return;
             }
             
-            await safeAnswerCbQuery(ctx);
             const { handleQueueConnectConfirm } = await import("./queueMonitor");
             await handleQueueConnectConfirm(ctx, bot, userId);
         } catch (error) {
