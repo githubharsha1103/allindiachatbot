@@ -88,15 +88,17 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 // Cleanup old entries from userLastAction periodically
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = 60000; // 1 minute
-  for (const [userId, timestamp] of userLastAction) {
-    if (now - timestamp > maxAge) {
-      userLastAction.delete(userId);
+if (process.env.NODE_ENV !== "test") {
+  setInterval(() => {
+    const now = Date.now();
+    const maxAge = 60000; // 1 minute
+    for (const [userId, timestamp] of userLastAction) {
+      if (now - timestamp > maxAge) {
+        userLastAction.delete(userId);
+      }
     }
-  }
-}, 30000); // Check every 30 seconds
+  }, 30000); // Check every 30 seconds
+}
 
 // Lock context interface for re-entrant mutex
 interface ChatLockContext {
@@ -1219,12 +1221,14 @@ bot.command("setgender", async (ctx) => {
 console.log("[INFO] - Bot is online");
 
 // Load statistics
-getTotalChats().then(chats => {
-  bot.totalChats = chats;
-  console.log(`[INFO] - Loaded ${chats} total chats from database`);
-}).catch(err => {
-  console.error("[ERROR] - Failed to load statistics:", err);
-});
+if (process.env.NODE_ENV !== "test") {
+  getTotalChats().then(chats => {
+    bot.totalChats = chats;
+    console.log(`[INFO] - Loaded ${chats} total chats from database`);
+  }).catch(err => {
+    console.error("[ERROR] - Failed to load statistics:", err);
+  });
+}
 
 /* ---------------- SERVER STARTUP ---------------- */
 import { createWebServer, startWebServer } from "./server/webServer";

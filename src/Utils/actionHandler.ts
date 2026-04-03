@@ -38,6 +38,15 @@ export interface Action {
     disabled?: boolean;
 }
 
+type TelegramEditError = {
+  description?: string;
+  message?: string;
+};
+
+function asTelegramEditError(error: unknown): TelegramEditError {
+  return typeof error === "object" && error !== null ? error as TelegramEditError : {};
+}
+
 // ==================== Search UI Functions ====================
 
 // Search animation messages
@@ -144,10 +153,11 @@ export async function startSearch(ctx: ActionContext, bot: ExtraTelegraf, userId
             SEARCH_MESSAGES[messageIndex],
             { reply_markup: stopKeyboard }
           );
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const telegramError = asTelegramEditError(err);
           // FIX #10: IMPROVED ERROR LOGGING
-          if (!err.description?.includes("message is not modified")) {
-            console.error(`[ANIMATION] Error editing message for user ${userId}:`, err.message);
+          if (!telegramError.description?.includes("message is not modified")) {
+            console.error(`[ANIMATION] Error editing message for user ${userId}:`, telegramError.message || err);
             clearInterval(interval);
           }
         }
@@ -204,11 +214,12 @@ export async function stopSearch(bot: ExtraTelegraf, userId: number): Promise<vo
       { reply_markup: { inline_keyboard: [] } }
     );
     console.log(`[stopSearch] Updated message for user ${userId}`);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const telegramError = asTelegramEditError(err);
     // SAFE ERROR LOGGING: Log meaningful errors
-    if (!err.description?.includes("message is not modified") && 
-        !err.description?.includes("message to edit not found")) {
-      console.error(`[stopSearch] Error for user ${userId}:`, err.message);
+    if (!telegramError.description?.includes("message is not modified") && 
+        !telegramError.description?.includes("message to edit not found")) {
+      console.error(`[stopSearch] Error for user ${userId}:`, telegramError.message || err);
     }
   }
   
@@ -244,11 +255,12 @@ export async function onMatchFound(bot: ExtraTelegraf, userId: number): Promise<
       { reply_markup: { inline_keyboard: [] } }
     );
     console.log(`[onMatchFound] Updated message for user ${userId}`);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const telegramError = asTelegramEditError(err);
     // SAFE ERROR LOGGING
-    if (!err.description?.includes("message is not modified") && 
-        !err.description?.includes("message to edit not found")) {
-      console.error(`[onMatchFound] Error for user ${userId}:`, err.message);
+    if (!telegramError.description?.includes("message is not modified") && 
+        !telegramError.description?.includes("message to edit not found")) {
+      console.error(`[onMatchFound] Error for user ${userId}:`, telegramError.message || err);
     }
   }
   
@@ -264,10 +276,11 @@ export async function sendConnectionMessage(bot: ExtraTelegraf, userId: number):
   try {
     await bot.telegram.sendMessage(userId, "💬 You are now connected. Say hi!");
     console.log(`[Connection] Sent to user ${userId}`);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const telegramError = asTelegramEditError(err);
     // User might have blocked bot - that's okay, but log it
-    if (!err.description?.includes("bot was blocked")) {
-      console.error(`[Connection] Error sending to user ${userId}:`, err.message);
+    if (!telegramError.description?.includes("bot was blocked")) {
+      console.error(`[Connection] Error sending to user ${userId}:`, telegramError.message || err);
     }
   }
 }
@@ -298,15 +311,16 @@ bot.action("stop_search", async (ctx) => {
   await stopSearch(bot, userId);
 });
 
-export async function loadActions() {
+export function loadActions() {
     try {
         // Check dist/Commands first (for production), then src/Commands (for development)
         let commandsDir = path.join(process.cwd(), "dist/Commands");
-        if (!fs.existsSync(commandsDir)) {
+        if (process.env.NODE_ENV === "test" || !fs.existsSync(commandsDir)) {
             commandsDir = path.join(process.cwd(), "src/Commands");
         }
         
         const Files: string[] = [];
+        const loadErrors: string[] = [];
         
         // Recursively get all .js files in Commands directory
         function getAllFiles(dir: string): void {
@@ -349,11 +363,19 @@ export async function loadActions() {
                 });
             } catch (error) {
                 console.error(`[ActionHandler] -`, error);
+                const message = error instanceof Error ? error.message : String(error);
+                loadErrors.push(`${path.basename(file)}: ${message}`);
             }
         }
+
+        if (loadErrors.length > 0) {
+            throw new Error(`Failed to load actions:\n${loadErrors.join("\n")}`);
+        }
+
         console.info(`[INFO] - Actions Loaded`);
     } catch (err) {
         console.error(`[ActionHandler] -`, err);
+        throw err;
     }
 }
 

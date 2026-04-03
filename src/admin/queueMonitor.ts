@@ -17,7 +17,7 @@ import { ExtraTelegraf } from "../index";
 import { isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, safeEditMessageText, getErrorMessage } from "../Utils/telegramUi";
 import { getUser, updateUser } from "../storage/db";
-import { beginChatRuntime } from "../Utils/chatFlow";
+import { beginChatRuntime, clearChatRuntime } from "../Utils/chatFlow";
 import { 
     tryLockUserForConnection, 
     markUserAsConnected, 
@@ -190,6 +190,8 @@ export async function safeRemoveFromQueue(
             console.error(`[queueMonitor] Warning: User ${userId} still in queue after removal attempt`);
             return { success: false, message: "Failed to fully remove user from queue" };
         }
+
+        bot.syncQueueState();
         
         console.log(`[queueMonitor] User ${userId} removed from queue by admin ${adminId}`);
         
@@ -205,6 +207,24 @@ export async function safeRemoveFromQueue(
  */
 export function isUserInQueue(bot: ExtraTelegraf, userId: number): boolean {
     return bot.queueSet.has(userId) || bot.premiumQueueSet.has(userId);
+}
+
+async function normalizeQueuedUserStatus(bot: ExtraTelegraf, userId: number): Promise<Awaited<ReturnType<typeof getUser>> | null> {
+    const user = await getUser(userId);
+    if (!user) {
+        return null;
+    }
+
+    if (!isUserInQueue(bot, userId) || bot.runningChats.has(userId) || user.queueStatus === "connected") {
+        return user;
+    }
+
+    if (user.queueStatus !== "waiting") {
+        await updateUser(userId, { queueStatus: "waiting" });
+        return { ...user, queueStatus: "waiting" };
+    }
+
+    return user;
 }
 
 // ==================== Connect Admin to Queue User ====================
@@ -248,12 +268,12 @@ export async function connectAdminToUser(
     
     try {
         // Ensure queued users can be lock-acquired even if legacy records have no queueStatus.
-        const preLockUser = await getUser(userId);
+        const preLockUser = await normalizeQueuedUserStatus(bot, userId);
         if (!preLockUser) {
             return { success: false, message: "User not found" };
         }
-        if (preLockUser.queueStatus !== "waiting") {
-            await updateUser(userId, { queueStatus: "waiting" });
+        if (preLockUser.queueStatus === "connected") {
+            return { success: false, message: "User already connected" };
         }
 
         console.log(`[queueMonitor] Attempting atomic lock for user ${userId}`);
@@ -494,74 +514,42 @@ export async function handleQueueRemove(
     bot: ExtraTelegraf,
     userId: number
 ): Promise<void> {
-    // Admin validation using context-based check
     if (!isAdminContext(ctx)) {
         await unauthorizedResponse(ctx, "Unauthorized");
         return;
     }
-    
+
     const adminId = ctx.from?.id;
     if (!adminId) return;
-    
+
     try {
         await safeAnswerCbQuery(ctx);
-        
         console.log(`[queueMonitor] Remove button clicked for user ${userId} by admin ${adminId}`);
-        
-        // RACE CONDITION PROTECTION: Check in-memory queue first
+
         if (!isUserInQueue(bot, userId)) {
-            console.log(`[queueMonitor] Duplicate remove prevented: User ${userId} not in in-memory queue`);
-            await safeAnswerCbQuery(ctx, "❌ User already removed");
+            await safeAnswerCbQuery(ctx, "User already removed");
             return;
         }
-        
-        // Fetch user from DB to check status
-        const userData = await getUser(userId);
+
+        const userData = await normalizeQueuedUserStatus(bot, userId);
         if (!userData) {
-            console.log(`[queueMonitor] User ${userId} not found in DB`);
-            await safeAnswerCbQuery(ctx, "❌ User not found");
+            await safeAnswerCbQuery(ctx, "User not found");
             return;
         }
-        
-        // Prevent removing users who are already connected
-        if (userData.queueStatus === "connected") {
-            console.log(`[queueMonitor] Prevented remove: User ${userId} is already connected`);
-            await safeAnswerCbQuery(ctx, "❌ User already connected - cannot remove");
+
+        if (bot.runningChats.has(userId) || userData.queueStatus === "connected") {
+            await safeAnswerCbQuery(ctx, "User already connected - cannot remove");
             return;
         }
-        
-        // Prevent removing users who are already being connected (in progress)
-        if (userData.queueStatus === "connecting") {
-            console.log(`[queueMonitor] Prevented remove: User ${userId} is being connected by another admin`);
-            await safeAnswerCbQuery(ctx, "❌ User already connecting - please wait");
-            return;
-        }
-        
-        // Prevent removing users who are already marked as removed
-        if (userData.queueStatus === "removed") {
-            console.log(`[queueMonitor] Duplicate remove prevented: User ${userId} already marked as removed in DB`);
-            // Also remove from in-memory queue to sync
-            await safeRemoveFromQueue(bot, userId, adminId);
-            await safeAnswerCbQuery(ctx, "❌ User already removed");
-            await showQueueMonitor(ctx, bot);
-            return;
-        }
-        
-        // Proceed with removal - silently remove user (no notification)
+
         const result = await safeRemoveFromQueue(bot, userId, adminId);
-        
         if (result.success) {
-            // Mark as removed in DB
             await markUserAsRemoved(userId);
-            console.log(`[queueMonitor] User ${userId} silently removed from queue by admin ${adminId}`);
-            // Silently acknowledge - no visible message to user about admin action
-            await safeAnswerCbQuery(ctx, `✅ User removed from queue`);
+            await safeAnswerCbQuery(ctx, "User removed from queue");
         } else {
-            console.log(`[queueMonitor] Failed to remove user ${userId}: ${result.message}`);
-            await safeAnswerCbQuery(ctx, `❌ ${result.message}`);
+            await safeAnswerCbQuery(ctx, result.message);
         }
-        
-        // Refresh the queue monitor
+
         await showQueueMonitor(ctx, bot);
     } catch (error) {
         console.error("[queueMonitor] handleQueueRemove error:", getErrorMessage(error));
@@ -615,19 +603,14 @@ export async function handleQueueConnect(
         }
         
         // Prevent connecting to already connected users
-        if (userData.queueStatus === "connected") {
+        if (bot.runningChats.has(userId) || userData.queueStatus === "connected") {
             console.log(`[queueMonitor] Prevented: User ${userId} is already connected`);
-            await safeAnswerCbQuery(ctx, "❌ User already connected");
+            await safeAnswerCbQuery(ctx, "User already connected");
             return;
         }
-        
-        // Prevent connecting to users already being connected
-        if (userData.queueStatus === "connecting") {
-            console.log(`[queueMonitor] Prevented: User ${userId} is being connected by another admin`);
-            await safeAnswerCbQuery(ctx, "❌ User already connecting - please wait");
-            return;
-        }
-        
+
+        await normalizeQueuedUserStatus(bot, userId);
+
         const result = await connectAdminToUser(ctx, bot, adminId, userId);
         
         if (result.success) {
@@ -686,20 +669,11 @@ export async function handleQueueConnectConfirm(
         // First, end the current admin chat if exists
         const currentPartner = bot.runningChats.get(adminId);
         if (currentPartner) {
-            // Remove from running chats
-            bot.runningChats.delete(adminId);
-            bot.runningChats.delete(currentPartner);
-            bot.messageCountMap.delete(adminId);
-            bot.messageCountMap.delete(currentPartner);
-            
-            // Clear chatStartTime in database for partner to prevent inconsistent state
-            const { updateUser } = await import("../storage/db");
-            await updateUser(currentPartner, { chatStartTime: null });
-            
-            // Notify the admin they have been disconnected
+            await clearChatRuntime(bot, adminId, currentPartner);
+            await updateUser(adminId, { chatStartTime: null, queueStatus: "removed" });
+            await updateUser(currentPartner, { chatStartTime: null, reportingPartner: adminId, queueStatus: "removed" });
             await ctx.reply("You have been disconnected from the previous chat.");
-            
-            // Notify the partner
+
             try {
                 await bot.telegram.sendMessage(
                     currentPartner,

@@ -12,13 +12,14 @@ export interface Event {
   disabled?: boolean;
 }
 
-export async function loadEvents(bot: ExtraTelegraf) {
+export function loadEvents(bot: ExtraTelegraf) {
   try {
     let eventsDir = path.join(process.cwd(), "dist/Events");
     if (process.env.NODE_ENV === "test" || !fs.existsSync(eventsDir)) {
       eventsDir = path.join(process.cwd(), "src/Events");
     }
     const Files: string[] = [];
+    const loadErrors: string[] = [];
     
     // Recursively get all .js files in Events directory
     function getAllFiles(dir: string): void {
@@ -58,10 +59,18 @@ export async function loadEvents(bot: ExtraTelegraf) {
         );
       } catch (error) {
         console.error(`[EventHandler] -`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        loadErrors.push(`${path.basename(file)}: ${message}`);
       }
     }
+
+    if (loadErrors.length > 0) {
+      throw new Error(`Failed to load event handlers:\n${loadErrors.join("\n")}`);
+    }
+
     console.info(`[INFO] - Events Loaded`);
   } catch (err) {
     console.error(`[EventHandler] -`, err);
+    throw err;
   }
 }

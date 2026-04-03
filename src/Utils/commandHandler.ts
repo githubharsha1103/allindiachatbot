@@ -12,13 +12,14 @@ export interface Command {
   disabled?: boolean;
   adminOnly?: boolean;
 }
-export async function loadCommands(bot: ExtraTelegraf) {
+export function loadCommands(bot: ExtraTelegraf) {
   try {
     let commandsDir = path.join(process.cwd(), "dist/Commands");
     if (process.env.NODE_ENV === "test" || !fs.existsSync(commandsDir)) {
       commandsDir = path.join(process.cwd(), "src/Commands");
     }
     const Files: string[] = [];
+    const loadErrors: string[] = [];
     
     // Recursively get all .js files in Commands directory
     function getAllFiles(dir: string): void {
@@ -65,11 +66,18 @@ export async function loadCommands(bot: ExtraTelegraf) {
         });
       } catch (error) {
         console.error(`[CommandHandler] -`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        loadErrors.push(`${path.basename(file)}: ${message}`);
       }
+    }
+
+    if (loadErrors.length > 0) {
+      throw new Error(`Failed to load commands:\n${loadErrors.join("\n")}`);
     }
 
     console.info(`[INFO] - Commands Loaded`);
   } catch (error) {
     console.error(`[CommandHandler] -`, error);
+    throw error;
   }
 }

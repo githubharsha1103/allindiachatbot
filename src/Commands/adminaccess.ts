@@ -62,6 +62,10 @@ export function clearAllAdminSessions(): void {
  * Start periodic cleanup of expired admin sessions
  */
 export function startSessionCleanup(): void {
+    if (process.env.NODE_ENV === "test") {
+        return;
+    }
+
     // Clear any stale sessions from previous bot instance on startup
     clearAllAdminSessions();
     

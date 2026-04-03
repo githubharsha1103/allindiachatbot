@@ -1737,7 +1737,9 @@ async function flushLastActiveUpdates(): Promise<void> {
 }
 
 // Flush updates every interval
-setInterval(flushLastActiveUpdates, LAST_ACTIVE_FLUSH_INTERVAL);
+if (process.env.NODE_ENV !== "test") {
+  setInterval(flushLastActiveUpdates, LAST_ACTIVE_FLUSH_INTERVAL);
+}
 
 // Get users who haven't been active for X days
 export async function getInactiveUsers(daysInactive: number): Promise<string[]> {
