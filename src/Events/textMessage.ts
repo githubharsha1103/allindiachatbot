@@ -269,7 +269,7 @@ export default {
             await ctx.reply(
               getSetupCompleteText(
                 { gender: userForInput.gender, age: userForInput.age, state: formattedState },
-                process.env.GROUP_INVITE_LINK || "https://t.me/teluguanomychat"
+                process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1"
               ),
               { parse_mode: "Markdown" }
             );
