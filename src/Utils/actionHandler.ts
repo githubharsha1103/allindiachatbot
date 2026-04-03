@@ -647,79 +647,52 @@ const setupAgeKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("📝 Type Age", "SETUP_AGE_MANUAL")]
 ]);
 
-// Setup state keyboard - Page 1 with regions (NO BACK/CANCEL - must complete)
-const setupStateKeyboardPage1 = Markup.inlineKeyboard([
-    [Markup.button.callback("📍 North India", "SETUP_STATE_NORTH")],
-    [Markup.button.callback("📍 South India", "SETUP_STATE_SOUTH")],
-    [Markup.button.callback("📍 East India", "SETUP_STATE_EAST")],
-    [Markup.button.callback("📍 West India", "SETUP_STATE_WEST")],
-    [Markup.button.callback("📍 Central India", "SETUP_STATE_CENTRAL")],
-    [Markup.button.callback("📍 North-East India", "SETUP_STATE_NORTHEAST")],
-    [Markup.button.callback("📍 Union Territories", "SETUP_STATE_UT")],
-    [Markup.button.callback("🌍 Outside India", "SETUP_COUNTRY_OTHER")]
-]);
+
 
 const setupStateNorthKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟢 Delhi", "SETUP_STATE_DELHI")],
-    [Markup.button.callback("🟢 Haryana", "SETUP_STATE_HARYANA")],
-    [Markup.button.callback("🟢 Himachal Pradesh", "SETUP_STATE_HIMACHAL")],
-    [Markup.button.callback("🟢 Jammu & Kashmir", "SETUP_STATE_JAMMU")],
-    [Markup.button.callback("🟢 Punjab", "SETUP_STATE_PUNJAB")],
-    [Markup.button.callback("🟢 Rajasthan", "SETUP_STATE_RAJASTHAN")],
-    [Markup.button.callback("🟢 Uttarakhand", "SETUP_STATE_UTTARAKHAND")],
-    [Markup.button.callback("🟢 Uttar Pradesh", "SETUP_STATE_UTTARPRADESH")],
+    [Markup.button.callback("🏛️ Delhi", "SETUP_STATE_DELHI"), Markup.button.callback("🌾 Haryana", "SETUP_STATE_HARYANA")],
+    [Markup.button.callback("🏔️ Himachal Pradesh", "SETUP_STATE_HIMACHAL"), Markup.button.callback("🏔️ Jammu & Kashmir", "SETUP_STATE_JAMMU")],
+    [Markup.button.callback("🌾 Punjab", "SETUP_STATE_PUNJAB"), Markup.button.callback("🏜️ Rajasthan", "SETUP_STATE_RAJASTHAN")],
+    [Markup.button.callback("🏞️ Uttarakhand", "SETUP_STATE_UTTARAKHAND"), Markup.button.callback("🕌 Uttar Pradesh", "SETUP_STATE_UTTARPRADESH")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateSouthKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🔵 Andhra Pradesh", "SETUP_STATE_AP")],
-    [Markup.button.callback("🔵 Karnataka", "SETUP_STATE_KARNATAKA")],
-    [Markup.button.callback("🔵 Kerala", "SETUP_STATE_KERALA")],
-    [Markup.button.callback("🔵 Tamil Nadu", "SETUP_STATE_TAMILNADU")],
-    [Markup.button.callback("🔵 Telangana", "SETUP_STATE_TELANGANA")],
+    [Markup.button.callback("🌴 Andhra Pradesh", "SETUP_STATE_AP"), Markup.button.callback("🏛️ Karnataka", "SETUP_STATE_KARNATAKA")],
+    [Markup.button.callback("🌴 Kerala", "SETUP_STATE_KERALA"), Markup.button.callback("🏛️ Tamil Nadu", "SETUP_STATE_TAMILNADU")],
+    [Markup.button.callback("🏙️ Telangana", "SETUP_STATE_TELANGANA")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateEastKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟠 Bihar", "SETUP_STATE_BIHAR")],
-    [Markup.button.callback("🟠 Jharkhand", "SETUP_STATE_JHARKHAND")],
-    [Markup.button.callback("🟠 Odisha", "SETUP_STATE_ODISHA")],
-    [Markup.button.callback("🟠 West Bengal", "SETUP_STATE_WESTBENGAL")],
+    [Markup.button.callback("🏛️ Bihar", "SETUP_STATE_BIHAR"), Markup.button.callback("🏞️ Jharkhand", "SETUP_STATE_JHARKHAND")],
+    [Markup.button.callback("🏖️ Odisha", "SETUP_STATE_ODISHA"), Markup.button.callback("🌉 West Bengal", "SETUP_STATE_WESTBENGAL")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateWestKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟣 Goa", "SETUP_STATE_GOA")],
-    [Markup.button.callback("🟣 Gujarat", "SETUP_STATE_GUJARAT")],
-    [Markup.button.callback("🟣 Maharashtra", "SETUP_STATE_MAHARASHTRA")],
+    [Markup.button.callback("🏖️ Goa", "SETUP_STATE_GOA"), Markup.button.callback("🏛️ Gujarat", "SETUP_STATE_GUJARAT")],
+    [Markup.button.callback("🏙️ Maharashtra", "SETUP_STATE_MAHARASHTRA")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateCentralKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟤 Chhattisgarh", "SETUP_STATE_CHHATTISGARH")],
-    [Markup.button.callback("🟤 Madhya Pradesh", "SETUP_STATE_MADHYAPRADESH")],
+    [Markup.button.callback("🌲 Chhattisgarh", "SETUP_STATE_CHHATTISGARH"), Markup.button.callback("🏛️ Madhya Pradesh", "SETUP_STATE_MADHYAPRADESH")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateNortheastKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟢 Arunachal Pradesh", "SETUP_STATE_ARUNACHAL")],
-    [Markup.button.callback("🟢 Assam", "SETUP_STATE_ASSAM")],
-    [Markup.button.callback("🟢 Manipur", "SETUP_STATE_MANIPUR")],
-    [Markup.button.callback("🟢 Meghalaya", "SETUP_STATE_MEGHALAYA")],
-    [Markup.button.callback("🟢 Mizoram", "SETUP_STATE_MIZORAM")],
-    [Markup.button.callback("🟢 Nagaland", "SETUP_STATE_NAGALAND")],
-    [Markup.button.callback("🟢 Sikkim", "SETUP_STATE_SIKKIM")],
-    [Markup.button.callback("🟢 Tripura", "SETUP_STATE_TRIPURA")],
+    [Markup.button.callback("🏔️ Arunachal Pradesh", "SETUP_STATE_ARUNACHAL"), Markup.button.callback("🌺 Assam", "SETUP_STATE_ASSAM")],
+    [Markup.button.callback("🎭 Manipur", "SETUP_STATE_MANIPUR"), Markup.button.callback("🌧️ Meghalaya", "SETUP_STATE_MEGHALAYA")],
+    [Markup.button.callback("🌲 Mizoram", "SETUP_STATE_MIZORAM"), Markup.button.callback("🏔️ Nagaland", "SETUP_STATE_NAGALAND")],
+    [Markup.button.callback("🏔️ Sikkim", "SETUP_STATE_SIKKIM"), Markup.button.callback("🌺 Tripura", "SETUP_STATE_TRIPURA")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
 const setupStateUTKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback("🟠 Chandigarh", "SETUP_STATE_CHANDIGARH")],
-    [Markup.button.callback("🟠 Delhi", "SETUP_STATE_DELHI")],
-    [Markup.button.callback("🟠 Jammu & Kashmir", "SETUP_STATE_JAMMU")],
-    [Markup.button.callback("🟠 Ladakh", "SETUP_STATE_LADAKH")],
-    [Markup.button.callback("🟠 Puducherry", "SETUP_STATE_PUDUCHERRY")],
-    [Markup.button.callback("🟠 Andaman & Nicobar", "SETUP_STATE_ANDAMAN")],
+    [Markup.button.callback("🏛️ Chandigarh", "SETUP_STATE_CHANDIGARH"), Markup.button.callback("🏛️ Delhi", "SETUP_STATE_DELHI")],
+    [Markup.button.callback("🏔️ Jammu & Kashmir", "SETUP_STATE_JAMMU"), Markup.button.callback("🏔️ Ladakh", "SETUP_STATE_LADAKH")],
+    [Markup.button.callback("🏖️ Puducherry", "SETUP_STATE_PUDUCHERRY"), Markup.button.callback("🏝️ Andaman & Nicobar", "SETUP_STATE_ANDAMAN")],
     [Markup.button.callback("⬅️ Back", "SETUP_BACK_STATE_P1")]
 ]);
 
