@@ -15,6 +15,7 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "../index";
 import { isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, getErrorMessage } from "../Utils/telegramUi";
+import { registerGroupManagementCallbacks } from "./groupManagement";
 
 function parseQueueActionUserId(ctx: Context, prefix: string): number | null {
     const callbackQuery = ctx.callbackQuery as { data?: string } | undefined;
@@ -34,6 +35,7 @@ export * from "./analyticsDashboard";
 export * from "./queueMonitor";
 export * from "./revenueAnalytics";
 export * from "./moderationSettings";
+export * from "./groupManagement";
 
 // Re-export types for convenience
 export type { ModerationSettings } from "./moderationSettings";
@@ -289,6 +291,8 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
             await safeAnswerCbQuery(ctx, "Error loading editor");
         }
     });
+
+    registerGroupManagementCallbacks(bot);
     
     console.log("[admin] Admin callbacks registered successfully");
 }

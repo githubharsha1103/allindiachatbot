@@ -5,6 +5,7 @@ import { getUser, updateUser, updateLastActive, processReferral } from "../stora
 import { getSetupStepPrompt, SetupStep } from "../Utils/setupFlow";
 import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit } from "../index";
 import { handleGroupVerificationStart } from "../Utils/groupVerification";
+import { getRuntimeGroupInviteLink } from "../Utils/groupRuntime";
 
 const SETUP_STEP_DONE = "done";
 
@@ -103,7 +104,7 @@ export default {
       }
     }
 
-    const groupInviteLink = process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl";
+    const groupInviteLink = await getRuntimeGroupInviteLink();
     await ctx.reply(
       "🌟 <b>Welcome back!</b> 🌟\n\n" +
         "This bot helps you chat anonymously with people worldwide.\n\n" +

@@ -118,6 +118,9 @@ function validateAdminIds(): void {
 
 function validateGroupChatId(): void {
   const groupChatId = process.env.GROUP_ID || process.env.GROUP_CHAT_ID || "";
+  if (!groupChatId) {
+    return;
+  }
   // Telegram supergroup IDs are typically negative numeric values (e.g. -100123...)
   if (!/^-?\d+$/.test(groupChatId)) {
     console.error("[FATAL] GROUP_ID or GROUP_CHAT_ID must be a numeric chat ID (example: -1001234567890).");
@@ -161,7 +164,7 @@ function validateGroupVerificationConfig(): void {
     process.exit(1);
   }
 
-  if (verificationEnabled === "true") {
+  if (process.env.GROUP_ID || process.env.GROUP_CHAT_ID) {
     validateGroupChatId();
   }
 

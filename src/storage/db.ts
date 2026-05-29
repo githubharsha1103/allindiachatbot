@@ -279,6 +279,18 @@ export interface PremiumPaymentOrder {
   providerPaymentChargeId?: string;
 }
 
+export interface GroupSettings {
+  _id?: ObjectId | string;
+  groupId: string;
+  verificationEnabled: boolean;
+  autoKickEnabled: boolean;
+  autoKickMinutes: number;
+  inviteLink: string;
+  verificationMessage: string;
+  updatedAt: number;
+  updatedBy?: number;
+}
+
 // Extended user with isNew flag
 interface UserWithNew extends User {
   isNew?: boolean;
@@ -295,6 +307,7 @@ type JsonUsersDb = Record<string, JsonUserRecord>;
 type JsonStats = { totalChats?: number };
 type JsonPaymentOrdersDb = Record<string, PremiumPaymentOrder>;
 type JsonUsageAnalyticsDb = UsageAnalyticsSnapshot;
+type JsonGroupSettingsDb = GroupSettings;
 
 const AGE_RANGE_TO_AVERAGE: Record<string, string> = {
   "13-17": "15",
@@ -401,6 +414,11 @@ async function connectToDatabase(): Promise<Db> {
         { userId: 1, status: 1, createdAt: -1 },
         { name: "premium_order_user_status_idx" }
       );
+
+      await db.collection<GroupSettings>("groupSettings").createIndex(
+        { updatedAt: -1 },
+        { name: "group_settings_updated_idx" }
+      );
       
       console.log("[INFO] - Database indexes created successfully");
       
@@ -427,11 +445,17 @@ async function getPremiumOrdersCollection(): Promise<Collection<PremiumPaymentOr
   return database.collection<PremiumPaymentOrder>("premium_orders");
 }
 
+async function getGroupSettingsCollection(): Promise<Collection<GroupSettings>> {
+  const database = await connectToDatabase();
+  return database.collection<GroupSettings>("groupSettings");
+}
+
 // Fallback to JSON for local development without MongoDB
 const JSON_FILE = "src/storage/users.json";
 const BANS_FILE = "src/storage/bans.json";
 const PAYMENT_ORDERS_FILE = "src/storage/paymentOrders.json";
 const ANALYTICS_FILE = "src/storage/analytics.json";
+const GROUP_SETTINGS_FILE = "src/storage/groupSettings.json";
 const ANALYTICS_DOC_ID = "usage_analytics_v1";
 const MAX_MATCH_ANALYTICS = 5000;
 const MAX_CHAT_ANALYTICS = 5000;
@@ -497,6 +521,153 @@ if (useMongoDB && !isFallbackMode) {
   console.log("[INFO] - No MongoDB URI found (or using placeholder), using JSON file storage");
 } else {
   console.log("[INFO] - MongoDB connection failed, using JSON file storage");
+}
+
+const DEFAULT_GROUP_INVITE_LINK = "https://t.me/+7kfSrledKehlMGFl";
+const DEFAULT_GROUP_VERIFICATION_MESSAGE = "🔒 Welcome {first_name}\n\nTo chat in this group, you must start @{bot_name}.\n\nClick below to verify.";
+
+function parsePositiveInteger(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function createDefaultGroupSettings(): GroupSettings {
+  const envGroupId = process.env.GROUP_ID || process.env.GROUP_CHAT_ID || "";
+  const envAutoKickMinutes = parsePositiveInteger(process.env.AUTO_KICK_UNVERIFIED_MINUTES);
+
+  return {
+    groupId: envGroupId,
+    verificationEnabled: (process.env.VERIFICATION_ENABLED || "false").toLowerCase() === "true",
+    autoKickEnabled: envAutoKickMinutes !== null,
+    autoKickMinutes: envAutoKickMinutes ?? 5,
+    inviteLink: process.env.GROUP_INVITE_LINK || DEFAULT_GROUP_INVITE_LINK,
+    verificationMessage: DEFAULT_GROUP_VERIFICATION_MESSAGE,
+    updatedAt: Date.now()
+  };
+}
+
+export function getDefaultGroupSettings(): GroupSettings {
+  return createDefaultGroupSettings();
+}
+
+function normalizeGroupSettings(settings?: Partial<GroupSettings> | null): GroupSettings {
+  const defaults = createDefaultGroupSettings();
+  const normalizedMinutes = settings?.autoKickMinutes && settings.autoKickMinutes > 0
+    ? settings.autoKickMinutes
+    : defaults.autoKickMinutes;
+
+  return {
+    groupId: settings?.groupId || defaults.groupId,
+    verificationEnabled: settings?.verificationEnabled ?? defaults.verificationEnabled,
+    autoKickEnabled: settings?.autoKickEnabled ?? defaults.autoKickEnabled,
+    autoKickMinutes: normalizedMinutes,
+    inviteLink: settings?.inviteLink || defaults.inviteLink,
+    verificationMessage: settings?.verificationMessage || defaults.verificationMessage,
+    updatedAt: settings?.updatedAt || Date.now(),
+    updatedBy: settings?.updatedBy
+  };
+}
+
+export async function getGroupSettings(): Promise<GroupSettings> {
+  return withDbRetry(async () => {
+    if (useMongoDB && !isFallbackMode) {
+      try {
+        const collection = await getGroupSettingsCollection();
+        const existing = await collection.findOne({});
+
+        if (existing) {
+          const normalized = normalizeGroupSettings(existing);
+          if (
+            normalized.groupId !== existing.groupId ||
+            normalized.verificationEnabled !== existing.verificationEnabled ||
+            normalized.autoKickEnabled !== existing.autoKickEnabled ||
+            normalized.autoKickMinutes !== existing.autoKickMinutes ||
+            normalized.inviteLink !== existing.inviteLink ||
+            normalized.verificationMessage !== existing.verificationMessage
+          ) {
+            await collection.updateOne(
+              { _id: existing._id },
+              {
+                $set: {
+                  groupId: normalized.groupId,
+                  verificationEnabled: normalized.verificationEnabled,
+                  autoKickEnabled: normalized.autoKickEnabled,
+                  autoKickMinutes: normalized.autoKickMinutes,
+                  inviteLink: normalized.inviteLink,
+                  verificationMessage: normalized.verificationMessage,
+                  updatedAt: Date.now()
+                }
+              }
+            );
+          }
+          return { ...normalized, _id: existing._id };
+        }
+
+        const defaults = createDefaultGroupSettings();
+        await collection.insertOne(defaults);
+        return defaults;
+      } catch (error) {
+        console.error("[ERROR] - MongoDB getGroupSettings error:", error);
+      }
+    }
+
+    const stored = await readJson<JsonGroupSettingsDb>(GROUP_SETTINGS_FILE);
+    const hasStoredSettings = stored && typeof stored === "object" && Object.keys(stored).length > 0;
+
+    if (hasStoredSettings) {
+      const normalized = normalizeGroupSettings(stored);
+      await writeJson(GROUP_SETTINGS_FILE, normalized);
+      return normalized;
+    }
+
+    const defaults = createDefaultGroupSettings();
+    await writeJson(GROUP_SETTINGS_FILE, defaults);
+    return defaults;
+  }, "getGroupSettings");
+}
+
+export async function updateGroupSettings(
+  updates: Partial<GroupSettings>,
+  updatedBy?: number
+): Promise<GroupSettings> {
+  return withDbRetry(async () => {
+    const current = await getGroupSettings();
+    const next = normalizeGroupSettings({
+      ...current,
+      ...updates,
+      updatedAt: Date.now(),
+      updatedBy: updatedBy ?? current.updatedBy
+    });
+
+    if (useMongoDB && !isFallbackMode) {
+      try {
+        const collection = await getGroupSettingsCollection();
+        await collection.updateOne(
+          current._id ? { _id: current._id } : {},
+          { $set: next },
+          { upsert: true }
+        );
+        return next;
+      } catch (error) {
+        console.error("[ERROR] - MongoDB updateGroupSettings error:", error);
+      }
+    }
+
+    await writeJson(GROUP_SETTINGS_FILE, next);
+    return next;
+  }, "updateGroupSettings");
+}
+
+export function getDefaultGroupInviteLink(): string {
+  return DEFAULT_GROUP_INVITE_LINK;
+}
+
+export function getDefaultGroupVerificationMessage(): string {
+  return DEFAULT_GROUP_VERIFICATION_MESSAGE;
 }
 
 // ==================== USER FUNCTIONS ====================

@@ -14,6 +14,8 @@ import { buildPartnerLeftMessage, exitChatKeyboard } from "../Utils/chatFlow";
 import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
 import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
 import { isPrivateChat } from "../Utils/chatContext";
+import { processGroupManagementInput } from "../admin/groupManagement";
+import { getRuntimeGroupInviteLink } from "../Utils/groupRuntime";
 
 // Cache for user display names in spectating (5 minute TTL)
 const userDisplayNameCache = new Map<number, { name: string; timestamp: number }>();
@@ -67,6 +69,10 @@ export default {
 
     // Skip commands (messages starting with /)
     if (text?.startsWith("/")) return;
+
+    if (await processGroupManagementInput(ctx, bot)) {
+      return;
+    }
 
     // Moderation settings numeric input handler
     const pendingModerationEdit = getPendingModerationEdit(ctx.from.id);
@@ -268,10 +274,11 @@ export default {
 
             await updateUser(ctx.from.id, { state: formattedState, setupStep: "done" });
 
+            const inviteLink = await getRuntimeGroupInviteLink();
             await ctx.reply(
               getSetupCompleteText(
                 { gender: userForInput.gender, age: userForInput.age, state: formattedState },
-                process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl"
+                inviteLink
               ),
               { parse_mode: "Markdown" }
             );

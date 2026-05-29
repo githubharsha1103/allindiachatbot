@@ -129,7 +129,8 @@ const mainKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("📊 Health Dashboard", "ADMIN_HEALTH_DASHBOARD")],
     [Markup.button.callback("Analytics Dashboard", "ADMIN_ANALYTICS_DASHBOARD")],
     [Markup.button.callback("📥 Queue Monitor", "ADMIN_QUEUE_MONITOR")],
-    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")]
+    [Markup.button.callback("🛡 Moderation Settings", "ADMIN_MODERATION_SETTINGS")],
+    [Markup.button.callback("🛡 Group Management", "ADMIN_GROUP_MANAGEMENT")]
 ]);
 
 const backKeyboard = Markup.inlineKeyboard([

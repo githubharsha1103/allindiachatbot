@@ -2,6 +2,11 @@ import { Context, Markup } from "telegraf";
 import type { ChatPermissions, ChatMemberUpdated, User as TelegramUser } from "@telegraf/types";
 import type { ExtraTelegraf } from "../index";
 import { getUser, isUserVerifiedForGroup, markUserVerifiedForGroup, updateUser } from "../storage/db";
+import {
+  getRuntimeAutoKickMinutes,
+  getRuntimeGroupSettings,
+  renderVerificationMessage
+} from "./groupRuntime";
 
 const DEFAULT_BOT_USERNAME = process.env.BOT_USERNAME || "allindiachatbot";
 const joinMessageCooldowns = new Map<string, number>();
@@ -38,46 +43,12 @@ type ChatMemberContext = Context & {
   chatMember?: ChatMemberUpdated;
 };
 
-function getVerificationEnabled(): boolean {
-  return (process.env.VERIFICATION_ENABLED || "false").toLowerCase() === "true";
-}
-
-function getVerificationGroupId(): string | null {
-  return process.env.GROUP_ID || process.env.GROUP_CHAT_ID || null;
-}
-
-function getAutoKickUnverifiedMinutes(): number | null {
-  const rawValue = process.env.AUTO_KICK_UNVERIFIED_MINUTES;
-  if (!rawValue) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(rawValue, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
 function buildVerificationUrl(): string {
   return `https://t.me/${DEFAULT_BOT_USERNAME}?start=groupverify`;
 }
 
 function getJoinKey(groupId: string, userId: number): string {
   return `${groupId}:${userId}`;
-}
-
-function getUserMention(user: TelegramUser): string {
-  const label = user.username ? `@${user.username}` : user.first_name;
-  return `<a href="tg://user?id=${user.id}">${escapeHtml(label)}</a>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function buildVerificationMessage(user: TelegramUser): string {
-  return `${getUserMention(user)}\n\n🔒 Welcome!\n\nTo chat in this group, you must start @${DEFAULT_BOT_USERNAME}.\n\nClick below to verify.`;
 }
 
 function buildVerificationKeyboard() {
@@ -158,8 +129,8 @@ async function kickUnverifiedUser(bot: ExtraTelegraf, groupId: string, userId: n
   await bot.telegram.unbanChatMember(groupId, userId, { only_if_banned: true });
 }
 
-function scheduleAutoKick(bot: ExtraTelegraf, groupId: string, userId: number): void {
-  const autoKickMinutes = getAutoKickUnverifiedMinutes();
+async function scheduleAutoKick(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
+  const autoKickMinutes = await getRuntimeAutoKickMinutes();
   if (!autoKickMinutes) {
     return;
   }
@@ -230,7 +201,8 @@ async function processJoinedUser(bot: ExtraTelegraf, groupId: string, user: Tele
     console.log("[DEBUG] Verification message target user:", user.id);
 
     try {
-      await bot.telegram.sendMessage(groupId, buildVerificationMessage(user), {
+      const settings = await getRuntimeGroupSettings();
+      await bot.telegram.sendMessage(groupId, await renderVerificationMessage(bot, user, settings), {
         parse_mode: "HTML",
         ...buildVerificationKeyboard()
       });
@@ -243,12 +215,13 @@ async function processJoinedUser(bot: ExtraTelegraf, groupId: string, user: Tele
     console.log("[DEBUG] Exiting: verification message skipped because cooldown blocked duplicate send");
   }
 
-  scheduleAutoKick(bot, groupId, user.id);
+  await scheduleAutoKick(bot, groupId, user.id);
 }
 
 export async function handleChatMemberUpdate(ctx: ChatMemberContext, bot: ExtraTelegraf): Promise<void> {
-  const verificationEnabled = getVerificationEnabled();
-  const groupId = getVerificationGroupId();
+  const settings = await getRuntimeGroupSettings();
+  const verificationEnabled = settings.verificationEnabled;
+  const groupId = settings.groupId || null;
   const update = ctx.chatMember;
 
   console.log("========== CHAT MEMBER UPDATE RECEIVED ==========");
@@ -269,6 +242,7 @@ export async function handleChatMemberUpdate(ctx: ChatMemberContext, bot: ExtraT
   console.log("Old Status:", update.old_chat_member.status);
   console.log("New Status:", update.new_chat_member.status);
   console.log("[DEBUG] Incoming chat ID:", update.chat.id);
+  console.log("[DEBUG] Comparing incoming chat ID to configured group ID:", String(update.chat.id), "===", groupId);
 
   if (!verificationEnabled) {
     console.log("[DEBUG] Exiting: verification disabled");
@@ -313,12 +287,13 @@ export async function handleGroupVerificationStart(ctx: Context, bot: ExtraTeleg
     return true;
   }
 
-  if (!getVerificationEnabled()) {
+  const settings = await getRuntimeGroupSettings();
+  if (!settings.verificationEnabled) {
     await ctx.reply("❌ Verification is currently disabled.");
     return true;
   }
 
-  const groupId = getVerificationGroupId();
+  const groupId = settings.groupId || null;
   if (!groupId) {
     console.error("[GROUP_VERIFY] Verification requested but GROUP_ID/GROUP_CHAT_ID is not configured");
     await ctx.reply("❌ Verification is not configured right now.");
@@ -359,8 +334,8 @@ export async function handleGroupVerificationStart(ctx: Context, bot: ExtraTeleg
     console.log(`[GROUP_VERIFY] User unrestricted: userId=${userId}, groupId=${groupId}`);
     await ctx.reply("✅ Verification successful. You can now chat in the group.");
   } catch (error) {
-    console.error(`[GROUP_VERIFY] Verification failed: userId=${userId}, groupId=${groupId}:`, error);
-    await ctx.reply("❌ Verification failed. Please try again in a moment.");
+    console.error(`[GROUP_VERIFY] Verification failed: userId=${userId}, groupId=${groupId}`, error);
+    await ctx.reply("❌ Verification failed. Please try again.");
   }
 
   return true;

@@ -1197,6 +1197,8 @@ loadEvents(bot);
 loadActions();
 
 bot.on("chat_member", async (ctx) => {
+  console.log("CHAT_MEMBER EVENT ARRIVED");
+  console.log(JSON.stringify(ctx.chatMember, null, 2));
   await handleChatMemberUpdate(ctx as Context, bot);
 });
 
@@ -1248,6 +1250,9 @@ bot.command("setgender", async (ctx) => {
 
 /* ---------------- STARTUP ---------------- */
 console.log("[INFO] - Bot is online");
+console.log("GROUP_ID =", process.env.GROUP_ID);
+console.log("GROUP_CHAT_ID =", process.env.GROUP_CHAT_ID);
+console.log("VERIFICATION_ENABLED =", process.env.VERIFICATION_ENABLED);
 console.log("[DEBUG] Startup GROUP_ID:", process.env.GROUP_ID);
 console.log("[DEBUG] Startup GROUP_CHAT_ID:", process.env.GROUP_CHAT_ID);
 console.log("[DEBUG] Startup VERIFICATION_ENABLED:", process.env.VERIFICATION_ENABLED);

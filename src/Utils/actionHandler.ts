@@ -21,6 +21,7 @@ import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
 import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
 import { updateUserPreferenceInQueue, updateUserStatePreferenceInQueue } from "../admin/queueMonitor";
 import { isPrivateChat } from "./chatContext";
+import { getRuntimeGroupId, getRuntimeGroupInviteLink } from "./groupRuntime";
 
 // Valid preference options
 export const genderOptions = ["male", "female", "any"] as const;
@@ -453,15 +454,13 @@ const mainMenuKeyboard = Markup.inlineKeyboard([
     [Markup.button.callback("❓ Help", "START_HELP")]
 ]);
 
-// Group verification settings
-const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-1001234567890";
-const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl";
-
 // Check if user is a member of the group
 async function isUserGroupMember(userId: number): Promise<boolean> {
     try {
-        // Use GROUP_CHAT_ID directly - Telegram API requires numeric chat ID
-        const chatId = GROUP_CHAT_ID;
+        const chatId = await getRuntimeGroupId();
+        if (!chatId) {
+            return false;
+        }
         const chatMember = await bot.telegram.getChatMember(chatId, userId);
         // Member status: 'creator', 'administrator', 'member', 'restricted' are valid
         const validStatuses = ['creator', 'administrator', 'member', 'restricted'];
@@ -2394,7 +2393,8 @@ async function showSetupComplete(ctx: ActionContext) {
     if (!ctx.from) return;
     const user = await getUser(ctx.from.id);
     const keyboard = mainMenuKeyboard;
-    const text = getSetupCompleteText(user, GROUP_INVITE_LINK);
+    const inviteLink = await getRuntimeGroupInviteLink();
+    const text = getSetupCompleteText(user, inviteLink);
 
     // Use safeEditMessageText to prevent UI freeze
     await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...keyboard });
