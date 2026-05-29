@@ -19,7 +19,7 @@ declare namespace NodeJS {
       // Group Configuration
       GROUP_ID: string;
       GROUP_CHAT_ID: string;
-      GROUP_INVITE_LINK: string;
+      VERIFICATION_BOT_USERNAME: string;
       VERIFICATION_ENABLED: string;
       AUTO_KICK_UNVERIFIED_MINUTES?: string;
       BOT_USERNAME?: string;

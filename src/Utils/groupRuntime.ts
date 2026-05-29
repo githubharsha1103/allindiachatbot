@@ -1,22 +1,20 @@
 import { User as TelegramUser } from "@telegraf/types";
 import { ExtraTelegraf } from "../index";
 import {
-  getDefaultGroupInviteLink,
+  buildVerificationBotDisplay,
+  buildVerificationBotUrl,
   getDefaultGroupVerificationMessage,
   getGroupSettings,
-  GroupSettings
+  GroupSettings,
+  normalizeBotUsername
 } from "../storage/db";
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function getUserMention(user: TelegramUser): string {
-  const label = user.first_name || user.username || "there";
-  return `<a href="tg://user?id=${user.id}">${escapeHtml(label)}</a>`;
+function getUserLabel(user: TelegramUser): string {
+  return user.first_name || user.username || "there";
 }
 
 async function getGroupName(bot: ExtraTelegraf, settings: GroupSettings): Promise<string> {
@@ -36,11 +34,6 @@ export async function getRuntimeGroupSettings(): Promise<GroupSettings> {
   return getGroupSettings();
 }
 
-export async function getRuntimeGroupInviteLink(): Promise<string> {
-  const settings = await getGroupSettings();
-  return settings.inviteLink || getDefaultGroupInviteLink();
-}
-
 export async function getRuntimeGroupId(): Promise<string | null> {
   const settings = await getGroupSettings();
   return settings.groupId || null;
@@ -56,6 +49,14 @@ export async function getRuntimeAutoKickMinutes(): Promise<number | null> {
   return settings.autoKickEnabled ? settings.autoKickMinutes : null;
 }
 
+export function getVerificationButtonUrl(username: string): string {
+  return buildVerificationBotUrl(username);
+}
+
+export function getVerificationButtonText(username: string): string {
+  return `@${normalizeBotUsername(username)}`;
+}
+
 export async function renderVerificationMessage(
   bot: ExtraTelegraf,
   user: TelegramUser,
@@ -63,22 +64,13 @@ export async function renderVerificationMessage(
 ): Promise<string> {
   const resolvedSettings = settings || await getGroupSettings();
   const template = resolvedSettings.verificationMessage || getDefaultGroupVerificationMessage();
-  const botName = bot.botInfo?.username || process.env.BOT_USERNAME || "allindiachatbot";
+  const botUsername = normalizeBotUsername(resolvedSettings.verificationBotUsername || bot.botInfo?.username || process.env.BOT_USERNAME);
   const groupName = await getGroupName(bot, resolvedSettings);
-  const username = user.username ? `@${escapeHtml(user.username)}` : getUserMention(user);
+  const username = user.username ? `@${escapeHtml(user.username)}` : "";
 
-  return template.replace(/\{(first_name|username|group_name|bot_name)\}/g, (_, key: string) => {
-    switch (key) {
-      case "first_name":
-        return getUserMention(user);
-      case "username":
-        return username;
-      case "group_name":
-        return escapeHtml(groupName);
-      case "bot_name":
-        return escapeHtml(botName);
-      default:
-        return "";
-    }
-  });
+  return template
+    .replace(/\{first_name\}/g, escapeHtml(getUserLabel(user)))
+    .replace(/\{username\}/g, username)
+    .replace(/\{group_name\}/g, escapeHtml(groupName))
+    .replace(/\{bot_username\}/g, escapeHtml(botUsername));
 }

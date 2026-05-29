@@ -213,7 +213,7 @@ export function getSetupRequiredPrompt(user: Pick<User, "gender" | "age" | "stat
     return null;
 }
 
-export function getSetupCompleteText(user: Pick<User, "gender" | "age" | "state">, groupInviteLink: string): string {
+export function getSetupCompleteText(user: Pick<User, "gender" | "age" | "state">): string {
     const genderText = user.gender
         ? user.gender.charAt(0).toUpperCase() + user.gender.slice(1)
         : "Not Set";
@@ -229,8 +229,7 @@ export function getSetupCompleteText(user: Pick<User, "gender" | "age" | "state"
         `📍 *Location:* ${stateText}\n\n` +
         "━━━━━━━━━━━━━━━━━━━━\n\n" +
         "📢 *Want to join our community group?*\n" +
-        "Join to meet more people and stay updated!\n" +
-        `👉 ${groupInviteLink}\n\n` +
+        "Check the group management panel for the current group details.\n\n" +
         "━━━━━━━━━━━━━━━━━━━━\n\n" +
         "🎉 *You're all set to start chatting!*\n" +
         "/search - Find a chat partner now\n" +

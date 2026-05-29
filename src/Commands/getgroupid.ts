@@ -1,6 +1,6 @@
 import { Context } from "telegraf";
 import { Command } from "../Utils/commandHandler";
-import { getRuntimeGroupInviteLink } from "../Utils/groupRuntime";
+import { getRuntimeGroupSettings } from "../Utils/groupRuntime";
 
 interface ChatWithTitle {
   title?: string;
@@ -14,8 +14,8 @@ export default {
     if (!ctx.from) return;
 
     try {
-      const inviteLink = await getRuntimeGroupInviteLink();
-      const chat = await ctx.telegram.getChat(inviteLink);
+      const settings = await getRuntimeGroupSettings();
+      const chat = await ctx.telegram.getChat(settings.groupId);
       const chatId = chat.id;
       const chatType = chat.type;
       const chatTitle = (chat as ChatWithTitle).title || "N/A";
@@ -33,7 +33,7 @@ export default {
       console.error("[GetGroupId] - Error:", errorLike.message || error);
       await ctx.reply(
         "❌ *Error getting group info*\n\n" +
-          "Make sure the bot is added to the group and the invite link is valid.\n\n" +
+          "Make sure the bot is added to the group and the configured group ID is valid.\n\n" +
           "Error: " + (errorLike.description || errorLike.message || "Unknown error"),
         { parse_mode: "Markdown" }
       );

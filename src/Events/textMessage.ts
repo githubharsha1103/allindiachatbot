@@ -15,7 +15,6 @@ import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
 import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
 import { isPrivateChat } from "../Utils/chatContext";
 import { processGroupManagementInput } from "../admin/groupManagement";
-import { getRuntimeGroupInviteLink } from "../Utils/groupRuntime";
 
 // Cache for user display names in spectating (5 minute TTL)
 const userDisplayNameCache = new Map<number, { name: string; timestamp: number }>();
@@ -274,11 +273,9 @@ export default {
 
             await updateUser(ctx.from.id, { state: formattedState, setupStep: "done" });
 
-            const inviteLink = await getRuntimeGroupInviteLink();
             await ctx.reply(
               getSetupCompleteText(
                 { gender: userForInput.gender, age: userForInput.age, state: formattedState },
-                inviteLink
               ),
               { parse_mode: "Markdown" }
             );

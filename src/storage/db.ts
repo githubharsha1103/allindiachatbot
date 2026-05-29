@@ -283,12 +283,23 @@ export interface GroupSettings {
   _id?: ObjectId | string;
   groupId: string;
   verificationEnabled: boolean;
+  verificationBotUsername: string;
   autoKickEnabled: boolean;
   autoKickMinutes: number;
-  inviteLink: string;
   verificationMessage: string;
   updatedAt: number;
   updatedBy?: number;
+}
+
+export interface GroupVerificationPending {
+  _id?: ObjectId | string;
+  userId: number;
+  groupId: string;
+  joinedAt: number;
+  verified: boolean;
+  timeoutAt?: number;
+  autoKickAt?: number;
+  updatedAt: number;
 }
 
 // Extended user with isNew flag
@@ -450,12 +461,18 @@ async function getGroupSettingsCollection(): Promise<Collection<GroupSettings>> 
   return database.collection<GroupSettings>("groupSettings");
 }
 
+async function getGroupVerificationPendingCollection(): Promise<Collection<GroupVerificationPending>> {
+  const database = await connectToDatabase();
+  return database.collection<GroupVerificationPending>("groupVerificationPending");
+}
+
 // Fallback to JSON for local development without MongoDB
 const JSON_FILE = "src/storage/users.json";
 const BANS_FILE = "src/storage/bans.json";
 const PAYMENT_ORDERS_FILE = "src/storage/paymentOrders.json";
 const ANALYTICS_FILE = "src/storage/analytics.json";
 const GROUP_SETTINGS_FILE = "src/storage/groupSettings.json";
+const GROUP_VERIFICATION_PENDING_FILE = "src/storage/groupVerificationPending.json";
 const ANALYTICS_DOC_ID = "usage_analytics_v1";
 const MAX_MATCH_ANALYTICS = 5000;
 const MAX_CHAT_ANALYTICS = 5000;
@@ -523,8 +540,7 @@ if (useMongoDB && !isFallbackMode) {
   console.log("[INFO] - MongoDB connection failed, using JSON file storage");
 }
 
-const DEFAULT_GROUP_INVITE_LINK = "https://t.me/+7kfSrledKehlMGFl";
-const DEFAULT_GROUP_VERIFICATION_MESSAGE = "🔒 Welcome {first_name}\n\nTo chat in this group, you must start @{bot_name}.\n\nClick below to verify.";
+const DEFAULT_GROUP_VERIFICATION_MESSAGE = "🔒 Welcome {first_name}\n\nTo chat in this group you must verify yourself.\n\nStart @{bot_username} using the button below.";
 
 function parsePositiveInteger(value: string | undefined): number | null {
   if (!value) {
@@ -538,13 +554,14 @@ function parsePositiveInteger(value: string | undefined): number | null {
 function createDefaultGroupSettings(): GroupSettings {
   const envGroupId = process.env.GROUP_ID || process.env.GROUP_CHAT_ID || "";
   const envAutoKickMinutes = parsePositiveInteger(process.env.AUTO_KICK_UNVERIFIED_MINUTES);
+  const envVerificationBotUsername = normalizeBotUsername(process.env.VERIFICATION_BOT_USERNAME || process.env.BOT_USERNAME || "allindiachatbot");
 
   return {
     groupId: envGroupId,
     verificationEnabled: (process.env.VERIFICATION_ENABLED || "false").toLowerCase() === "true",
+    verificationBotUsername: envVerificationBotUsername,
     autoKickEnabled: envAutoKickMinutes !== null,
     autoKickMinutes: envAutoKickMinutes ?? 5,
-    inviteLink: process.env.GROUP_INVITE_LINK || DEFAULT_GROUP_INVITE_LINK,
     verificationMessage: DEFAULT_GROUP_VERIFICATION_MESSAGE,
     updatedAt: Date.now()
   };
@@ -563,9 +580,9 @@ function normalizeGroupSettings(settings?: Partial<GroupSettings> | null): Group
   return {
     groupId: settings?.groupId || defaults.groupId,
     verificationEnabled: settings?.verificationEnabled ?? defaults.verificationEnabled,
+    verificationBotUsername: normalizeBotUsername(settings?.verificationBotUsername || defaults.verificationBotUsername),
     autoKickEnabled: settings?.autoKickEnabled ?? defaults.autoKickEnabled,
     autoKickMinutes: normalizedMinutes,
-    inviteLink: settings?.inviteLink || defaults.inviteLink,
     verificationMessage: settings?.verificationMessage || defaults.verificationMessage,
     updatedAt: settings?.updatedAt || Date.now(),
     updatedBy: settings?.updatedBy
@@ -584,9 +601,9 @@ export async function getGroupSettings(): Promise<GroupSettings> {
           if (
             normalized.groupId !== existing.groupId ||
             normalized.verificationEnabled !== existing.verificationEnabled ||
+            normalized.verificationBotUsername !== existing.verificationBotUsername ||
             normalized.autoKickEnabled !== existing.autoKickEnabled ||
             normalized.autoKickMinutes !== existing.autoKickMinutes ||
-            normalized.inviteLink !== existing.inviteLink ||
             normalized.verificationMessage !== existing.verificationMessage
           ) {
             await collection.updateOne(
@@ -595,9 +612,9 @@ export async function getGroupSettings(): Promise<GroupSettings> {
                 $set: {
                   groupId: normalized.groupId,
                   verificationEnabled: normalized.verificationEnabled,
+                  verificationBotUsername: normalized.verificationBotUsername,
                   autoKickEnabled: normalized.autoKickEnabled,
                   autoKickMinutes: normalized.autoKickMinutes,
-                  inviteLink: normalized.inviteLink,
                   verificationMessage: normalized.verificationMessage,
                   updatedAt: Date.now()
                 }
@@ -662,12 +679,112 @@ export async function updateGroupSettings(
   }, "updateGroupSettings");
 }
 
-export function getDefaultGroupInviteLink(): string {
-  return DEFAULT_GROUP_INVITE_LINK;
+async function getPendingVerificationCollection(): Promise<Collection<GroupVerificationPending>> {
+  return getGroupVerificationPendingCollection();
+}
+
+export async function upsertPendingGroupVerification(
+  userId: number,
+  groupId: string,
+  joinedAt: number,
+  timeoutAt?: number,
+  autoKickAt?: number
+): Promise<void> {
+  const record: GroupVerificationPending = {
+    userId,
+    groupId,
+    joinedAt,
+    verified: false,
+    timeoutAt,
+    autoKickAt,
+    updatedAt: Date.now()
+  };
+
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPendingVerificationCollection();
+      await collection.updateOne({ userId, groupId }, { $set: record }, { upsert: true });
+      return;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB upsertPendingGroupVerification error:", error);
+    }
+  }
+
+  const pending = await readJson<Record<string, GroupVerificationPending>>(GROUP_VERIFICATION_PENDING_FILE);
+  pending[`${userId}:${groupId}`] = record;
+  await writeJson(GROUP_VERIFICATION_PENDING_FILE, pending);
+}
+
+export async function getPendingGroupVerification(userId: number, groupId: string): Promise<GroupVerificationPending | null> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPendingVerificationCollection();
+      return await collection.findOne({ userId, groupId });
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getPendingGroupVerification error:", error);
+    }
+  }
+
+  const pending = await readJson<Record<string, GroupVerificationPending>>(GROUP_VERIFICATION_PENDING_FILE);
+  return pending[`${userId}:${groupId}`] || null;
+}
+
+export async function markPendingGroupVerified(userId: number, groupId: string): Promise<void> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPendingVerificationCollection();
+      await collection.updateOne({ userId, groupId }, { $set: { verified: true, updatedAt: Date.now() } });
+      return;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB markPendingGroupVerified error:", error);
+    }
+  }
+
+  const pending = await readJson<Record<string, GroupVerificationPending>>(GROUP_VERIFICATION_PENDING_FILE);
+  const key = `${userId}:${groupId}`;
+  if (pending[key]) {
+    pending[key] = { ...pending[key], verified: true, updatedAt: Date.now() };
+    await writeJson(GROUP_VERIFICATION_PENDING_FILE, pending);
+  }
+}
+
+export async function clearPendingGroupVerification(userId: number, groupId: string): Promise<void> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getPendingVerificationCollection();
+      await collection.deleteOne({ userId, groupId });
+      return;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB clearPendingGroupVerification error:", error);
+    }
+  }
+
+  const pending = await readJson<Record<string, GroupVerificationPending>>(GROUP_VERIFICATION_PENDING_FILE);
+  const key = `${userId}:${groupId}`;
+  if (pending[key]) {
+    delete pending[key];
+    await writeJson(GROUP_VERIFICATION_PENDING_FILE, pending);
+  }
 }
 
 export function getDefaultGroupVerificationMessage(): string {
   return DEFAULT_GROUP_VERIFICATION_MESSAGE;
+}
+
+export function normalizeBotUsername(username: string | null | undefined): string {
+  if (!username) {
+    return "";
+  }
+
+  return username.trim().replace(/^@+/, "").toLowerCase();
+}
+
+export function buildVerificationBotUrl(username: string): string {
+  return `https://t.me/${normalizeBotUsername(username)}?start=groupverify`;
+}
+
+export function buildVerificationBotDisplay(username: string): string {
+  return `@${normalizeBotUsername(username)}`;
 }
 
 // ==================== USER FUNCTIONS ====================

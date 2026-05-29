@@ -21,7 +21,7 @@ import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
 import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
 import { updateUserPreferenceInQueue, updateUserStatePreferenceInQueue } from "../admin/queueMonitor";
 import { isPrivateChat } from "./chatContext";
-import { getRuntimeGroupId, getRuntimeGroupInviteLink } from "./groupRuntime";
+import { getRuntimeGroupId } from "./groupRuntime";
 
 // Valid preference options
 export const genderOptions = ["male", "female", "any"] as const;
@@ -2393,8 +2393,7 @@ async function showSetupComplete(ctx: ActionContext) {
     if (!ctx.from) return;
     const user = await getUser(ctx.from.id);
     const keyboard = mainMenuKeyboard;
-    const inviteLink = await getRuntimeGroupInviteLink();
-    const text = getSetupCompleteText(user, inviteLink);
+    const text = getSetupCompleteText(user);
 
     // Use safeEditMessageText to prevent UI freeze
     await safeEditMessageText(ctx, text, { parse_mode: "Markdown", ...keyboard });

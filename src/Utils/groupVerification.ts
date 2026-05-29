@@ -1,17 +1,17 @@
 import { Context, Markup } from "telegraf";
 import type { ChatPermissions, ChatMemberUpdated, User as TelegramUser } from "@telegraf/types";
 import type { ExtraTelegraf } from "../index";
-import { getUser, isUserVerifiedForGroup, markUserVerifiedForGroup, updateUser } from "../storage/db";
 import {
-  getRuntimeAutoKickMinutes,
-  getRuntimeGroupSettings,
-  renderVerificationMessage
-} from "./groupRuntime";
-
-const DEFAULT_BOT_USERNAME = process.env.BOT_USERNAME || "allindiachatbot";
-const joinMessageCooldowns = new Map<string, number>();
-const autoKickTimeouts = new Map<string, NodeJS.Timeout>();
-const JOIN_MESSAGE_DEDUPE_MS = 15 * 1000;
+  clearPendingGroupVerification,
+  getPendingGroupVerification,
+  getUser,
+  isUserVerifiedForGroup,
+  markPendingGroupVerified,
+  markUserVerifiedForGroup,
+  upsertPendingGroupVerification,
+  updateUser
+} from "../storage/db";
+import { getRuntimeAutoKickMinutes, getRuntimeGroupSettings, getVerificationButtonText, getVerificationButtonUrl, renderVerificationMessage } from "./groupRuntime";
 
 const RESTRICTED_PERMISSIONS: ChatPermissions = {
   can_send_messages: false,
@@ -39,94 +39,39 @@ const VERIFIED_PERMISSIONS: ChatPermissions = {
   can_add_web_page_previews: true
 };
 
-type ChatMemberContext = Context & {
-  chatMember?: ChatMemberUpdated;
-};
+const autoKickTimeouts = new Map<string, NodeJS.Timeout>();
 
-function buildVerificationUrl(): string {
-  return `https://t.me/${DEFAULT_BOT_USERNAME}?start=groupverify`;
-}
+type ChatMemberContext = Context & { chatMember?: ChatMemberUpdated };
 
-function getJoinKey(groupId: string, userId: number): string {
+function joinKey(groupId: string, userId: number): string {
   return `${groupId}:${userId}`;
 }
 
-function buildVerificationKeyboard() {
+function verificationKeyboard(username: string) {
   return Markup.inlineKeyboard([
-    [Markup.button.url("✅ Verify Account", buildVerificationUrl())]
+    [Markup.button.url("▶ Start Verification", getVerificationButtonUrl(username))]
   ]);
 }
 
-function getTelegramErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "object" && error !== null) {
-    const errorLike = error as { description?: string; message?: string };
-    return errorLike.description || errorLike.message || JSON.stringify(errorLike);
-  }
-
-  return String(error);
-}
-
-function shouldSendJoinMessage(groupId: string, userId: number): boolean {
-  const joinKey = getJoinKey(groupId, userId);
-  const lastSentAt = joinMessageCooldowns.get(joinKey);
-
-  if (lastSentAt && Date.now() - lastSentAt < JOIN_MESSAGE_DEDUPE_MS) {
-    console.log("[DEBUG] Exiting message send: duplicate verification message prevented by cooldown");
-    return false;
-  }
-
-  joinMessageCooldowns.set(joinKey, Date.now());
-  return true;
-}
-
-function clearAutoKickTimeout(groupId: string, userId: number): void {
-  const joinKey = getJoinKey(groupId, userId);
-  const timeout = autoKickTimeouts.get(joinKey);
-  if (timeout) {
-    clearTimeout(timeout);
-    autoKickTimeouts.delete(joinKey);
-  }
-}
-
-async function isGroupMember(bot: ExtraTelegraf, groupId: string, userId: number): Promise<boolean> {
-  try {
-    const member = await bot.telegram.getChatMember(groupId, userId);
-    return ["creator", "administrator", "member", "restricted"].includes(member.status);
-  } catch (error) {
-    console.error(`[GROUP_VERIFY] Verification failed to check membership for user ${userId} in ${groupId}:`, error);
-    return false;
-  }
-}
-
 async function restrictUser(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
-  console.log("[DEBUG] Attempting to restrict user");
-  console.log("[DEBUG] Restrict target group:", groupId);
-  console.log("[DEBUG] Restrict target user:", userId);
-
-  try {
-    await bot.telegram.restrictChatMember(groupId, userId, {
-      permissions: RESTRICTED_PERMISSIONS
-    });
-    console.log("[DEBUG] restrictChatMember() executed successfully");
-  } catch (error) {
-    console.error("[DEBUG] restrictChatMember() failed:", getTelegramErrorMessage(error));
-    throw error;
-  }
+  await bot.telegram.restrictChatMember(groupId, userId, { permissions: RESTRICTED_PERMISSIONS });
 }
 
 export async function unrestrictVerifiedUser(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
-  await bot.telegram.restrictChatMember(groupId, userId, {
-    permissions: VERIFIED_PERMISSIONS
-  });
+  await bot.telegram.restrictChatMember(groupId, userId, { permissions: VERIFIED_PERMISSIONS });
 }
 
 async function kickUnverifiedUser(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
   await bot.telegram.banChatMember(groupId, userId, undefined, { revoke_messages: false });
   await bot.telegram.unbanChatMember(groupId, userId, { only_if_banned: true });
+}
+
+function clearAutoKickTimeout(groupId: string, userId: number): void {
+  const timeout = autoKickTimeouts.get(joinKey(groupId, userId));
+  if (timeout) {
+    clearTimeout(timeout);
+    autoKickTimeouts.delete(joinKey(groupId, userId));
+  }
 }
 
 async function scheduleAutoKick(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
@@ -137,153 +82,80 @@ async function scheduleAutoKick(bot: ExtraTelegraf, groupId: string, userId: num
 
   clearAutoKickTimeout(groupId, userId);
 
-  const joinKey = getJoinKey(groupId, userId);
   const timeout = setTimeout(async () => {
-    autoKickTimeouts.delete(joinKey);
-
+    autoKickTimeouts.delete(joinKey(groupId, userId));
     try {
-      const stillVerified = await isUserVerifiedForGroup(userId, groupId);
-      if (stillVerified) {
+      const pending = await getPendingGroupVerification(userId, groupId);
+      if (!pending || pending.verified) {
         return;
       }
 
-      const stillMember = await isGroupMember(bot, groupId, userId);
-      if (!stillMember) {
+      const member = await bot.telegram.getChatMember(groupId, userId);
+      if (!["member", "restricted"].includes(member.status)) {
         return;
       }
 
       await kickUnverifiedUser(bot, groupId, userId);
-      console.log(`[GROUP_VERIFY] User auto-kicked: userId=${userId}, groupId=${groupId}, timeoutMinutes=${autoKickMinutes}`);
     } catch (error) {
       console.error(`[GROUP_VERIFY] Auto-kick failed for user ${userId} in group ${groupId}:`, error);
     }
   }, autoKickMinutes * 60 * 1000);
 
-  autoKickTimeouts.set(joinKey, timeout);
+  autoKickTimeouts.set(joinKey(groupId, userId), timeout);
 }
 
 async function processJoinedUser(bot: ExtraTelegraf, groupId: string, user: TelegramUser): Promise<void> {
-  if (user.is_bot) {
-    console.log("[DEBUG] Exiting: joined user is a bot");
-    return;
-  }
+  if (user.is_bot) return;
 
-  console.log(`[GROUP_VERIFY] User joined group: userId=${user.id}, groupId=${groupId}`);
-  console.log("[DEBUG] processJoinedUser() executing");
+  const settings = await getRuntimeGroupSettings();
+  const alreadyVerified = await isUserVerifiedForGroup(user.id, groupId);
 
   await getUser(user.id);
-  await updateUser(user.id, {
-    name: user.username || user.first_name || null,
-    lastActive: Date.now()
-  });
+  await updateUser(user.id, { name: user.username || user.first_name || null, lastActive: Date.now() });
 
-  const alreadyVerified = await isUserVerifiedForGroup(user.id, groupId);
   if (alreadyVerified) {
-    console.log(`[GROUP_VERIFY] User ${user.id} already verified for group ${groupId}, skipping restriction`);
-    console.log("[DEBUG] Exiting: user already verified for this group");
     clearAutoKickTimeout(groupId, user.id);
-
-    try {
-      await unrestrictVerifiedUser(bot, groupId, user.id);
-      console.log(`[GROUP_VERIFY] User unrestricted: userId=${user.id}, groupId=${groupId}`);
-    } catch (error) {
-      console.error(`[GROUP_VERIFY] Failed to ensure unrestricted state for verified user ${user.id}:`, error);
-    }
+    await unrestrictVerifiedUser(bot, groupId, user.id);
     return;
   }
 
   await restrictUser(bot, groupId, user.id);
-  console.log(`[GROUP_VERIFY] User restricted: userId=${user.id}, groupId=${groupId}`);
 
-  if (shouldSendJoinMessage(groupId, user.id)) {
-    console.log("[DEBUG] Sending verification message");
-    console.log("[DEBUG] Verification message target group:", groupId);
-    console.log("[DEBUG] Verification message target user:", user.id);
+  const joinedAt = Date.now();
+  const autoKickAt = settings.autoKickEnabled ? joinedAt + (settings.autoKickMinutes * 60 * 1000) : undefined;
+  await upsertPendingGroupVerification(user.id, groupId, joinedAt, autoKickAt, autoKickAt);
 
-    try {
-      const settings = await getRuntimeGroupSettings();
-      await bot.telegram.sendMessage(groupId, await renderVerificationMessage(bot, user, settings), {
-        parse_mode: "HTML",
-        ...buildVerificationKeyboard()
-      });
-      console.log("[DEBUG] sendMessage() executed successfully");
-    } catch (error) {
-      console.error("[DEBUG] sendMessage() failed:", getTelegramErrorMessage(error));
-      throw error;
+  await bot.telegram.sendMessage(
+    groupId,
+    await renderVerificationMessage(bot, user, settings),
+    {
+      parse_mode: "HTML",
+      ...verificationKeyboard(settings.verificationBotUsername)
     }
-  } else {
-    console.log("[DEBUG] Exiting: verification message skipped because cooldown blocked duplicate send");
-  }
+  );
 
   await scheduleAutoKick(bot, groupId, user.id);
 }
 
 export async function handleChatMemberUpdate(ctx: ChatMemberContext, bot: ExtraTelegraf): Promise<void> {
   const settings = await getRuntimeGroupSettings();
-  const verificationEnabled = settings.verificationEnabled;
-  const groupId = settings.groupId || null;
   const update = ctx.chatMember;
-
-  console.log("========== CHAT MEMBER UPDATE RECEIVED ==========");
-  console.log("[DEBUG] Verification enabled:", verificationEnabled);
-  console.log("[DEBUG] Configured GROUP_ID:", groupId);
-  console.log("[DEBUG] process.env.GROUP_ID:", process.env.GROUP_ID);
-  console.log("[DEBUG] process.env.GROUP_CHAT_ID:", process.env.GROUP_CHAT_ID);
-  console.log("[DEBUG] process.env.VERIFICATION_ENABLED:", process.env.VERIFICATION_ENABLED);
-
-  if (!update) {
-    console.log("[DEBUG] Incoming chat ID:", undefined);
-    console.log("[DEBUG] Exiting: chatMember update payload missing");
-    return;
-  }
-
-  console.log("Chat ID:", update.chat.id);
-  console.log("User ID:", update.new_chat_member.user.id);
-  console.log("Old Status:", update.old_chat_member.status);
-  console.log("New Status:", update.new_chat_member.status);
-  console.log("[DEBUG] Incoming chat ID:", update.chat.id);
-  console.log("[DEBUG] Comparing incoming chat ID to configured group ID:", String(update.chat.id), "===", groupId);
-
-  if (!verificationEnabled) {
-    console.log("[DEBUG] Exiting: verification disabled");
-    return;
-  }
-
-  if (!groupId) {
-    console.log("[DEBUG] Exiting: group ID not configured");
-    return;
-  }
-
-  if (String(update.chat.id) !== groupId) {
-    console.log("[DEBUG] Exiting: group ID mismatch");
+  if (!update || !settings.verificationEnabled || !settings.groupId || String(update.chat.id) !== settings.groupId) {
     return;
   }
 
   const oldStatus = update.old_chat_member.status;
   const newStatus = update.new_chat_member.status;
-  const joinedStatuses = ["member", "restricted", "administrator"];
-  const oldJoinedStatuses = ["member", "restricted", "administrator", "creator"];
-
-  if (!joinedStatuses.includes(newStatus) || oldJoinedStatuses.includes(oldStatus)) {
-    console.log("[DEBUG] Exiting: invalid status transition");
-    console.log("[DEBUG] joinedStatuses.includes(newStatus):", joinedStatuses.includes(newStatus));
-    console.log("[DEBUG] oldJoinedStatuses.includes(oldStatus):", oldJoinedStatuses.includes(oldStatus));
+  if (!["member", "restricted", "administrator"].includes(newStatus) || ["member", "restricted", "administrator", "creator"].includes(oldStatus)) {
     return;
   }
 
-  try {
-    console.log("[DEBUG] Calling processJoinedUser()");
-    await processJoinedUser(bot, groupId, update.new_chat_member.user);
-    console.log("[DEBUG] processJoinedUser() completed");
-  } catch (error) {
-    console.error(`[GROUP_VERIFY] Failed handling chat_member update for user ${update.new_chat_member.user.id}:`, error);
-    console.error("[DEBUG] handleChatMemberUpdate() caught error:", getTelegramErrorMessage(error));
-  }
+  await processJoinedUser(bot, settings.groupId, update.new_chat_member.user);
 }
 
 export async function handleGroupVerificationStart(ctx: Context, bot: ExtraTelegraf): Promise<boolean> {
   if (!ctx.from) {
-    await ctx.reply("⚠️ Could not identify your account. Please try again.");
+    await ctx.reply("❌ Could not identify your account. Please try again.");
     return true;
   }
 
@@ -293,50 +165,45 @@ export async function handleGroupVerificationStart(ctx: Context, bot: ExtraTeleg
     return true;
   }
 
-  const groupId = settings.groupId || null;
-  if (!groupId) {
-    console.error("[GROUP_VERIFY] Verification requested but GROUP_ID/GROUP_CHAT_ID is not configured");
+  if (!settings.groupId) {
     await ctx.reply("❌ Verification is not configured right now.");
     return true;
   }
 
   const userId = ctx.from.id;
-  console.log(`[GROUP_VERIFY] Verification started: userId=${userId}, groupId=${groupId}`);
-
-  const alreadyVerified = await isUserVerifiedForGroup(userId, groupId);
-  if (alreadyVerified) {
-    clearAutoKickTimeout(groupId, userId);
-    await ctx.reply("✅ You are already verified.");
-    return true;
-  }
-
-  const isMember = await isGroupMember(bot, groupId, userId);
-  if (!isMember) {
-    console.log(`[GROUP_VERIFY] Verification failed: userId=${userId}, reason=not_in_group`);
+  const pending = await getPendingGroupVerification(userId, settings.groupId);
+  if (!pending) {
+    const verified = await isUserVerifiedForGroup(userId, settings.groupId);
+    if (verified) {
+      await ctx.reply("✅ You are already verified.");
+      return true;
+    }
     await ctx.reply("❌ Join the group first.");
     return true;
   }
 
-  try {
-    const user = await getUser(userId);
-    await markUserVerifiedForGroup(userId, groupId);
-    await updateUser(userId, {
-      name: ctx.from.username || ctx.from.first_name || user.name,
-      lastActive: Date.now(),
-      hasJoinedGroup: true,
-      groupVerified: true
-    });
-
-    await unrestrictVerifiedUser(bot, groupId, userId);
-    clearAutoKickTimeout(groupId, userId);
-
-    console.log(`[GROUP_VERIFY] Verification successful: userId=${userId}, groupId=${groupId}`);
-    console.log(`[GROUP_VERIFY] User unrestricted: userId=${userId}, groupId=${groupId}`);
-    await ctx.reply("✅ Verification successful. You can now chat in the group.");
-  } catch (error) {
-    console.error(`[GROUP_VERIFY] Verification failed: userId=${userId}, groupId=${groupId}`, error);
-    await ctx.reply("❌ Verification failed. Please try again.");
+  if (pending.groupId !== settings.groupId) {
+    await ctx.reply("❌ Join the group first.");
+    return true;
   }
 
-  return true;
+  if (pending.verified || await isUserVerifiedForGroup(userId, settings.groupId)) {
+    await ctx.reply("✅ You are already verified.");
+    return true;
+  }
+
+  try {
+    await markPendingGroupVerified(userId, settings.groupId);
+    await markUserVerifiedForGroup(userId, settings.groupId);
+    await unrestrictVerifiedUser(bot, settings.groupId, userId);
+    clearAutoKickTimeout(settings.groupId, userId);
+    await clearPendingGroupVerification(userId, settings.groupId);
+    await updateUser(userId, { hasJoinedGroup: true, groupVerified: true, lastActive: Date.now() });
+    await ctx.reply("✅ Verification successful.\n\nYou can now chat in the group.");
+    return true;
+  } catch (error) {
+    console.error(`[GROUP_VERIFY] Verification failed for user ${userId}:`, error);
+    await ctx.reply("❌ Verification failed. Please try again.");
+    return true;
+  }
 }

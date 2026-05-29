@@ -15,7 +15,7 @@ interface EnvConfig {
   WEBHOOK_PATH?: string;
   WEBHOOK_URL?: string;
   RENDER_EXTERNAL_HOSTNAME?: string;
-  GROUP_INVITE_LINK?: string;
+  VERIFICATION_BOT_USERNAME?: string;
   WEB_API_KEY?: string;
   STARS_PREMIUM_WEEKLY?: string;
   STARS_PREMIUM_MONTHLY?: string;
