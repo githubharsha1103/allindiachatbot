@@ -455,7 +455,7 @@ const mainMenuKeyboard = Markup.inlineKeyboard([
 
 // Group verification settings
 const GROUP_CHAT_ID = process.env.GROUP_CHAT_ID || "-1001234567890";
-const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1";
+const GROUP_INVITE_LINK = process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl";
 
 // Check if user is a member of the group
 async function isUserGroupMember(userId: number): Promise<boolean> {

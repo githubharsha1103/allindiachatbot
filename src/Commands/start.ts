@@ -103,7 +103,7 @@ export default {
       }
     }
 
-    const groupInviteLink = process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1";
+    const groupInviteLink = process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl";
     await ctx.reply(
       "🌟 <b>Welcome back!</b> 🌟\n\n" +
         "This bot helps you chat anonymously with people worldwide.\n\n" +

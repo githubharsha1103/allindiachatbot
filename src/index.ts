@@ -1248,6 +1248,9 @@ bot.command("setgender", async (ctx) => {
 
 /* ---------------- STARTUP ---------------- */
 console.log("[INFO] - Bot is online");
+console.log("[DEBUG] Startup GROUP_ID:", process.env.GROUP_ID);
+console.log("[DEBUG] Startup GROUP_CHAT_ID:", process.env.GROUP_CHAT_ID);
+console.log("[DEBUG] Startup VERIFICATION_ENABLED:", process.env.VERIFICATION_ENABLED);
 
 // Load statistics
 if (process.env.NODE_ENV !== "test") {

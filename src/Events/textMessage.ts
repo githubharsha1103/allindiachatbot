@@ -271,7 +271,7 @@ export default {
             await ctx.reply(
               getSetupCompleteText(
                 { gender: userForInput.gender, age: userForInput.age, state: formattedState },
-                process.env.GROUP_INVITE_LINK || "https://t.me/+ch-xaEdPBKtmNTQ1"
+                process.env.GROUP_INVITE_LINK || "https://t.me/+7kfSrledKehlMGFl"
               ),
               { parse_mode: "Markdown" }
             );
