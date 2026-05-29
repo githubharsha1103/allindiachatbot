@@ -4,6 +4,7 @@ import { ExtraTelegraf } from "..";
 import { getUser, updateUser, updateLastActive, processReferral } from "../storage/db";
 import { getSetupStepPrompt, SetupStep } from "../Utils/setupFlow";
 import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit } from "../index";
+import { handleGroupVerificationStart } from "../Utils/groupVerification";
 
 const SETUP_STEP_DONE = "done";
 
@@ -52,6 +53,11 @@ export default {
     console.log(`[START] - parsed startParam: ${startParam}`);
 
     const user = await getUser(userId);
+
+    if (startParam === "groupverify") {
+      await handleGroupVerificationStart(ctx, bot as ExtraTelegraf);
+      return;
+    }
 
     if (user.isNew) {
       if (startParam && startParam.startsWith("REF")) {
@@ -111,4 +117,3 @@ export default {
     );
   }
 } as Command;
-

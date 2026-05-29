@@ -1163,10 +1163,29 @@ bot.use(async (ctx, next) => {
   return next();
 });
 
+/* ---------------- PRIVATE CHAT ENFORCEMENT ---------------- */
+bot.use(async (ctx, next) => {
+  if (ctx.chatMember || ctx.myChatMember) {
+    return next();
+  }
+
+  if (ctx.preCheckoutQuery) {
+    return next();
+  }
+
+  if (await blockNonPrivateChat(ctx)) {
+    return;
+  }
+
+  return next();
+});
+
 /* ---------------- LOADERS ---------------- */
 import { loadCommands } from "./Utils/commandHandler";
 import { loadEvents } from "./Utils/eventHandler";
 import { loadActions } from "./Utils/actionHandler";
+import { handleChatMemberUpdate } from "./Utils/groupVerification";
+import { blockNonPrivateChat, isPrivateChat } from "./Utils/chatContext";
 
 /* ---------------- ADMIN PANEL ---------------- */
 import { initAdminActions, startSessionCleanup } from "./Commands/adminaccess";
@@ -1176,6 +1195,10 @@ startSessionCleanup();
 loadCommands(bot);
 loadEvents(bot);
 loadActions();
+
+bot.on("chat_member", async (ctx) => {
+  await handleChatMemberUpdate(ctx as Context, bot);
+});
 
 /* ---------------- RE-ENGAGEMENT ---------------- */
 import { initReengagementActions } from "./Commands/reengagement";
@@ -1204,6 +1227,10 @@ loadModerationSettings().catch(err => console.error("[INIT] Failed to load moder
 
 /* ---------------- GENDER COMMAND ---------------- */
 bot.command("setgender", async (ctx) => {
+  if (!isPrivateChat(ctx)) {
+    return;
+  }
+
   const user = await getUser(ctx.from.id);
   
   // Use isPremium function to check both premium flag AND expiry
@@ -1233,7 +1260,7 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 /* ---------------- SERVER STARTUP ---------------- */
-import { createWebServer, startWebServer } from "./server/webServer";
+import { createWebServer, startWebServer, TELEGRAM_ALLOWED_UPDATES } from "./server/webServer";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -1251,12 +1278,12 @@ if (process.env.NODE_ENV === "test") {
   } else {
     // No webhook URL - use long polling for production
     console.log("[INFO] - No webhook URL detected, using long polling for production");
-    bot.launch();
+    bot.launch({ allowedUpdates: [...TELEGRAM_ALLOWED_UPDATES] });
   }
 } else {
   // Development: Use long polling
   console.log("[INFO] - Using long polling (local development)");
-  bot.launch();
+  bot.launch({ allowedUpdates: [...TELEGRAM_ALLOWED_UPDATES] });
 }
 
 /* ---------------- CLEANUP TASKS (Modular) ---------------- */

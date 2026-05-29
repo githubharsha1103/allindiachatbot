@@ -4,6 +4,7 @@ import { Context, Telegraf } from "telegraf";
 import type { ExtraTelegraf } from "../index";
 import { handleTelegramError } from "./telegramErrorHandler";
 import { isAdmin } from "./adminAuth";
+import { isPrivateChat } from "./chatContext";
 
 export interface Command {
   name: string;
@@ -49,6 +50,10 @@ export function loadCommands(bot: ExtraTelegraf) {
 
         const commandName = command.name;
         bot.command(commandName, async (ctx: Context) => {
+          if (!isPrivateChat(ctx)) {
+            return;
+          }
+
           if (command.adminOnly) {
             const userId = ctx.from?.id;
             if (!userId || !isAdmin(userId)) {

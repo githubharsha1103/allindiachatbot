@@ -149,6 +149,8 @@ export interface User {
   createdAt?: number; // Account creation timestamp
   setupStep?: string; // Track new user setup progress: 'gender', 'age', 'state', 'done'
   hasJoinedGroup?: boolean; // Track if user has joined the required group
+  verifiedGroups?: string[]; // Group chat IDs the user has verified for
+  groupVerified?: boolean; // Whether the user has verified for the configured group
   
   // Referral system fields
   referralCode?: string; // User's unique referral code
@@ -540,7 +542,9 @@ export async function getUser(id: number): Promise<UserWithNew> {
           queueStatus: "removed",
           queueJoinedAt: null,
           premiumExpires: null,
-          processedPaymentChargeIds: []
+          processedPaymentChargeIds: [],
+          verifiedGroups: [],
+          groupVerified: false
         };
         
         await collection.insertOne(newUser);
@@ -577,7 +581,9 @@ export async function getUser(id: number): Promise<UserWithNew> {
         queueStatus: "removed",
         queueJoinedAt: null,
         premiumExpires: null,
-        processedPaymentChargeIds: []
+        processedPaymentChargeIds: [],
+        verifiedGroups: [],
+        groupVerified: false
       };
       await writeJson(JSON_FILE, dbObj);
       return { ...(dbObj[id] as Record<string, unknown>), isNew: true } as UserWithNew;
@@ -617,6 +623,25 @@ export async function updateUser(id: number, data: Partial<User>): Promise<void>
     dbObj[id] = { ...(dbObj[id] || {}), ...normalizedData };
     await writeJson(JSON_FILE, dbObj);
   }, "updateUser");
+}
+
+export async function markUserVerifiedForGroup(userId: number, groupId: string): Promise<void> {
+  const user = await getUser(userId);
+  const verifiedGroups = user.verifiedGroups || [];
+
+  if (verifiedGroups.includes(groupId) && user.groupVerified) {
+    return;
+  }
+
+  await updateUser(userId, {
+    verifiedGroups: verifiedGroups.includes(groupId) ? verifiedGroups : [...verifiedGroups, groupId],
+    groupVerified: true
+  });
+}
+
+export async function isUserVerifiedForGroup(userId: number, groupId: string): Promise<boolean> {
+  const user = await getUser(userId);
+  return (user.verifiedGroups || []).includes(groupId);
 }
 
 export async function setGender(id: number, gender: string): Promise<void> {

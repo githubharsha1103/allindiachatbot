@@ -13,6 +13,7 @@ import DOMPurify from 'isomorphic-dompurify';
 import { buildPartnerLeftMessage, exitChatKeyboard } from "../Utils/chatFlow";
 import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
 import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
+import { isPrivateChat } from "../Utils/chatContext";
 
 // Cache for user display names in spectating (5 minute TTL)
 const userDisplayNameCache = new Map<number, { name: string; timestamp: number }>();
@@ -42,6 +43,7 @@ export default {
 
     // SAFETY: ctx.from may be undefined
     if (!ctx.from) return;
+    if (!isPrivateChat(ctx)) return;
 
     // Update user's last active time
     try {

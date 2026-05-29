@@ -17,8 +17,12 @@ declare namespace NodeJS {
       RENDER_EXTERNAL_HOSTNAME: string;
       
       // Group Configuration
+      GROUP_ID: string;
       GROUP_CHAT_ID: string;
       GROUP_INVITE_LINK: string;
+      VERIFICATION_ENABLED: string;
+      AUTO_KICK_UNVERIFIED_MINUTES?: string;
+      BOT_USERNAME?: string;
       
       // Web API Key (for securing admin endpoints)
       WEB_API_KEY?: string;

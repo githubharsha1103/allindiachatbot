@@ -13,7 +13,7 @@ import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
 import { Command } from "../Utils/commandHandler";
 import { Markup } from "telegraf";
-import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, resetUserReports, getDatabaseStatus, getPremiumUsers, getPaymentOrders, getUserPaymentHistory, getPremiumPaymentOrder, updateOrderStatus, getExpiringPremiumUsers, getPaymentOrderStats } from "../storage/db";
+import { getUser, updateUser, getAllUsers, readBans, isBanned, banUser, unbanUser, getReportCount, getBanReason, deleteUser, getReferralCount, verifyReferralCounts, fixReferralCounts, getGroupedReports, getGroupedReportsCount, getAllReferralStats, tempBanUser, getUserLatestReportReason, getUserReports, resetUserReports, getDatabaseStatus, getPremiumUsers, getPaymentOrders, getUserPaymentHistory, getPremiumPaymentOrder, updateOrderStatus, getExpiringPremiumUsers, getPaymentOrderStats } from "../storage/db";
 import { isAdmin, isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { getErrorMessage } from "../Utils/telegramUi";
 import { buildPartnerLeftMessage, clearChatRuntime, exitChatKeyboard } from "../Utils/chatFlow";
@@ -89,6 +89,29 @@ function formatDuration(ms: number): string {
     } else {
         return `${seconds}s`;
     }
+}
+
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+function formatReportReasonsForAdmin(reasons: string[]): string {
+    if (reasons.length === 0) {
+        return "None";
+    }
+
+    const reasonCounts = new Map<string, number>();
+    for (const reason of reasons) {
+        const normalizedReason = reason.trim() || "No reason provided";
+        reasonCounts.set(normalizedReason, (reasonCounts.get(normalizedReason) || 0) + 1);
+    }
+
+    return Array.from(reasonCounts.entries())
+        .map(([reason, count]) => `• ${escapeHtml(reason)}${count > 1 ? ` (${count}x)` : ""}`)
+        .join("\n");
 }
 
 // Admin main menu with clear options
@@ -2637,9 +2660,22 @@ export async function showUserDetails(ctx: Context, userId: number) {
     const state = user.state || "Not set";
     const totalChats = user.totalChats || 0;
     const reports = await getReportCount(userId);
+    const reportHistory = await getUserReports(userId);
+    const latestReportReason = await getUserLatestReportReason(userId);
     const banReason = await getBanReason(userId);
     const isUserBanned = await isBanned(userId);
     const referralCount = await getReferralCount(userId);
+    const reportReasons = reportHistory
+        .map(report => report.reason)
+        .filter((reason): reason is string => Boolean(reason && reason.trim()));
+
+    if (reportReasons.length === 0 && reports > 0 && latestReportReason) {
+        reportReasons.push(latestReportReason);
+    }
+
+    const reportReasonsText = reports > 0
+        ? formatReportReasonsForAdmin(reportReasons)
+        : "None";
     
     // Format preference safely
     const preference = user.premium
@@ -2669,6 +2705,8 @@ export async function showUserDetails(ctx: Context, userId: number) {
         `⚠️ Reports: ${reports}\n` +
         `💎 Premium: ${user.premium ? "Yes ✅" : "No ❌"}\n` +
         `🕐 Last Active: ${lastActiveText}`;
+
+    details += `\nReport Reasons: ${reports > 0 ? `\n${reportReasonsText}` : "None"}`;
 
     if (isUserBanned) {
         details += `\n🚫 <b>Banned</b>: Yes\n` +

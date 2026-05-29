@@ -20,6 +20,7 @@ import {
 import { showPremiumPurchaseMenu, isPremium } from "./starsPayments";
 import { isModerationEnabled, getAutoWarnThreshold, getAutoTempBanThreshold, getAutoBanThreshold, getTempBanDurationMs } from "../admin/moderationSettings";
 import { updateUserPreferenceInQueue, updateUserStatePreferenceInQueue } from "../admin/queueMonitor";
+import { isPrivateChat } from "./chatContext";
 
 // Valid preference options
 export const genderOptions = ["male", "female", "any"] as const;
@@ -361,6 +362,10 @@ export function loadActions() {
 
             try {
                 bot.action(actionName, async (ctx) => {
+                    if (!isPrivateChat(ctx)) {
+                        return;
+                    }
+
                     try {
                         await action.execute(ctx, bot);
                     } catch (err) {

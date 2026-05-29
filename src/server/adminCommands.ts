@@ -7,6 +7,7 @@ import {
 } from '../storage/db';
 import { broadcastWithRateLimit } from '../Utils/telegramErrorHandler';
 import { isAdmin } from '../Utils/adminAuth';
+import { isPrivateChat } from '../Utils/chatContext';
 
 /**
  * Register admin commands on the bot
@@ -14,6 +15,7 @@ import { isAdmin } from '../Utils/adminAuth';
 export function registerAdminCommands(bot: ExtraTelegraf): void {
   // Ban command
   bot.command("ban", async (ctx) => {
+    if (!isPrivateChat(ctx)) return;
     if (!ctx.from) return;
     if (!isAdmin(ctx.from.id)) return;
 
@@ -31,6 +33,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
 
   // Broadcast command
   bot.command("broadcast", async (ctx) => {
+    if (!isPrivateChat(ctx)) return;
     if (!ctx.from) return;
     if (!isAdmin(ctx.from.id)) return;
 
@@ -60,6 +63,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
 
   // Active chats command
   bot.command("active", (ctx) => {
+    if (!isPrivateChat(ctx)) return;
     if (!ctx.from) return;
     if (!isAdmin(ctx.from.id)) return;
     ctx.reply(`Active chats: ${bot.runningChats.size / 2}`);
@@ -67,6 +71,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
 
   // Stats command
   bot.command("stats", async (ctx) => {
+    if (!isPrivateChat(ctx)) return;
     if (!ctx.from) return;
     if (!isAdmin(ctx.from.id)) return;
     
@@ -92,6 +97,7 @@ export function registerAdminCommands(bot: ExtraTelegraf): void {
 
   // Set name command
   bot.command("setname", async (ctx) => {
+    if (!isPrivateChat(ctx)) return;
     if (!ctx.from) return;
     if (!isAdmin(ctx.from.id)) return;
     

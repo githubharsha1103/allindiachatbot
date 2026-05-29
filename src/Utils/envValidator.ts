@@ -6,7 +6,10 @@
 interface EnvConfig {
   BOT_TOKEN: string;
   ADMIN_IDS?: string;
+  GROUP_ID?: string;
   GROUP_CHAT_ID?: string;
+  VERIFICATION_ENABLED?: string;
+  AUTO_KICK_UNVERIFIED_MINUTES?: string;
   MONGODB_URI?: string;
   PORT?: string;
   WEBHOOK_PATH?: string;
@@ -89,6 +92,7 @@ export function validateEnvironment(): void {
   }
 
   validateStarsPricing();
+  validateGroupVerificationConfig();
 }
 
 /**
@@ -113,10 +117,10 @@ function validateAdminIds(): void {
 }
 
 function validateGroupChatId(): void {
-  const groupChatId = process.env.GROUP_CHAT_ID || "";
+  const groupChatId = process.env.GROUP_ID || process.env.GROUP_CHAT_ID || "";
   // Telegram supergroup IDs are typically negative numeric values (e.g. -100123...)
   if (!/^-?\d+$/.test(groupChatId)) {
-    console.error("[FATAL] GROUP_CHAT_ID must be a numeric chat ID (example: -1001234567890).");
+    console.error("[FATAL] GROUP_ID or GROUP_CHAT_ID must be a numeric chat ID (example: -1001234567890).");
     process.exit(1);
   }
 }
@@ -147,5 +151,28 @@ function validateStarsPricing(): void {
     if (!Number.isFinite(parsed) || parsed <= 0) {
       console.warn(`[WARN] ${key} should be a positive integer Stars amount. Received: ${raw}`);
     }
+  }
+}
+
+function validateGroupVerificationConfig(): void {
+  const verificationEnabled = (process.env.VERIFICATION_ENABLED || "false").toLowerCase();
+  if (!["true", "false"].includes(verificationEnabled)) {
+    console.error("[FATAL] VERIFICATION_ENABLED must be either true or false.");
+    process.exit(1);
+  }
+
+  if (verificationEnabled === "true") {
+    validateGroupChatId();
+  }
+
+  const autoKickRaw = process.env.AUTO_KICK_UNVERIFIED_MINUTES;
+  if (!autoKickRaw) {
+    return;
+  }
+
+  const parsed = Number.parseInt(autoKickRaw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.error("[FATAL] AUTO_KICK_UNVERIFIED_MINUTES must be a positive integer when set.");
+    process.exit(1);
   }
 }
