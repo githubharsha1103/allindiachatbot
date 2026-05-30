@@ -1,6 +1,6 @@
 import { Context } from "telegraf";
 import { ExtraTelegraf } from "..";
-import { areUsersMutuallyBlocked, getUser, recordChatAnalytics, recordMatchAnalytics, updateUser } from "../storage/db";
+import { areUsersMutuallyBlocked, getUser, recordChatAnalytics, recordMatchAnalytics, updateUser, incrementReengagementAnalytics } from "../storage/db";
 import {
   buildPartnerLeftMessage,
   buildPartnerMatchMessage,
@@ -217,6 +217,11 @@ export default {
       waitTimeMs: [currentUserWaitTime, partnerWaitTime],
       premiumMatch: result.isPremium || checkPremiumStatus(matchUser)
     });
+    if (user.lastReengagementClickedAt && Date.now() - user.lastReengagementClickedAt < 24 * 60 * 60 * 1000) {
+      await incrementReengagementAnalytics({
+        successful_matches_from_reminder: 1
+      });
+    }
     bot.incrementChatCount();
 
     const userPartnerInfo = buildPartnerMatchMessage(result.isPremium, matchUser);

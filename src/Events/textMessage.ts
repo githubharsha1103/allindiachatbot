@@ -15,6 +15,7 @@ import { handleSuccessfulPaymentMessage } from "../Utils/starsPayments";
 import { getUserDisplayNameFromDb } from "../Utils/userDisplayName";
 import { isPrivateChat } from "../Utils/chatContext";
 import { processGroupManagementInput } from "../admin/groupManagement";
+import { processReengagementEngineInput } from "../admin/reengagementEngine";
 
 // Cache for user display names in spectating (5 minute TTL)
 const userDisplayNameCache = new Map<number, { name: string; timestamp: number }>();
@@ -70,6 +71,10 @@ export default {
     if (text?.startsWith("/")) return;
 
     if (await processGroupManagementInput(ctx, bot)) {
+      return;
+    }
+
+    if (await processReengagementEngineInput(ctx)) {
       return;
     }
 

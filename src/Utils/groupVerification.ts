@@ -11,7 +11,7 @@ import {
   upsertPendingGroupVerification,
   updateUser
 } from "../storage/db";
-import { getRuntimeAutoKickMinutes, getRuntimeGroupSettings, getVerificationButtonText, getVerificationButtonUrl, renderVerificationMessage } from "./groupRuntime";
+import { getRuntimeAutoKickMinutes, getRuntimeGroupSettings, getVerificationButtonUrl, renderVerificationMessage } from "./groupRuntime";
 
 const RESTRICTED_PERMISSIONS: ChatPermissions = {
   can_send_messages: false,
@@ -49,8 +49,49 @@ function joinKey(groupId: string, userId: number): string {
 
 function verificationKeyboard(username: string) {
   return Markup.inlineKeyboard([
-    [Markup.button.url("▶ Start Verification", getVerificationButtonUrl(username))]
+    [Markup.button.url("🚀 Start", getVerificationButtonUrl(username))]
   ]);
+}
+
+async function deleteVerificationMessage(bot: ExtraTelegraf, groupId: string, messageId?: number): Promise<void> {
+  if (!messageId) {
+    return;
+  }
+
+  try {
+    await bot.telegram.deleteMessage(groupId, messageId);
+  } catch (error) {
+    console.warn(`[GROUP_VERIFY] Failed to delete verification message ${messageId} in ${groupId}:`, error);
+  }
+}
+
+function buildVerificationSuccessMessage(): string {
+  return [
+    "✅ Verification Complete!",
+    "",
+    "Welcome to All India Chat Bot 🎉",
+    "",
+    "You can now chat in the group and start exploring the bot.",
+    "",
+    "🤖 What can you do?",
+    "",
+    "💬 Meet new people",
+    "👥 Find active users",
+    "❤️ Make new friends",
+    "🎭 Enjoy fun bot features",
+    "🔍 Discover interesting chats",
+    "",
+    "📋 Quick Commands",
+    "",
+    "/start - Open the main menu",
+    "/help - View all commands",
+    "/profile - View your profile",
+    "/settings - Manage preferences",
+    "",
+    "✨ Thousands of users use the bot daily to connect, chat and relax.",
+    "",
+    "Try a command below and start exploring!"
+  ].join("\n");
 }
 
 async function restrictUser(bot: ExtraTelegraf, groupId: string, userId: number): Promise<void> {
@@ -122,10 +163,8 @@ async function processJoinedUser(bot: ExtraTelegraf, groupId: string, user: Tele
   await restrictUser(bot, groupId, user.id);
 
   const joinedAt = Date.now();
-  const autoKickAt = settings.autoKickEnabled ? joinedAt + (settings.autoKickMinutes * 60 * 1000) : undefined;
-  await upsertPendingGroupVerification(user.id, groupId, joinedAt, autoKickAt, autoKickAt);
-
-  await bot.telegram.sendMessage(
+  const timeoutAt = settings.autoKickEnabled ? joinedAt + (settings.autoKickMinutes * 60 * 1000) : undefined;
+  const verificationMessage = await bot.telegram.sendMessage(
     groupId,
     await renderVerificationMessage(bot, user, settings),
     {
@@ -134,6 +173,14 @@ async function processJoinedUser(bot: ExtraTelegraf, groupId: string, user: Tele
     }
   );
 
+  await upsertPendingGroupVerification({
+    userId: user.id,
+    groupId,
+    joinedAt,
+    verificationMessageId: verificationMessage.message_id,
+    timeoutAt,
+    autoKickAt: timeoutAt
+  });
   await scheduleAutoKick(bot, groupId, user.id);
 }
 
@@ -197,9 +244,10 @@ export async function handleGroupVerificationStart(ctx: Context, bot: ExtraTeleg
     await markUserVerifiedForGroup(userId, settings.groupId);
     await unrestrictVerifiedUser(bot, settings.groupId, userId);
     clearAutoKickTimeout(settings.groupId, userId);
+    await deleteVerificationMessage(bot, settings.groupId, pending.verificationMessageId);
     await clearPendingGroupVerification(userId, settings.groupId);
     await updateUser(userId, { hasJoinedGroup: true, groupVerified: true, lastActive: Date.now() });
-    await ctx.reply("✅ Verification successful.\n\nYou can now chat in the group.");
+    await ctx.telegram.sendMessage(userId, buildVerificationSuccessMessage());
     return true;
   } catch (error) {
     console.error(`[GROUP_VERIFY] Verification failed for user ${userId}:`, error);

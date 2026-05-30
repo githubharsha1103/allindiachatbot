@@ -919,19 +919,8 @@ export function initAdminActions(bot: ExtraTelegraf) {
             return;
         }
         await safeAnswerCbQuery(ctx);
-        
-        // Check admin authentication
-        const adminId = ctx.from?.id;
-        if (!adminId) return;
-        
-        const user = await getUser(adminId);
-        if (!user.isAdminAuthenticated) {
-            return ctx.reply("🚫 You are not authorized to access this command.");
-        }
-        
-        // Import and execute reengagement command with useEdit=true for transition effect
-        const reengagementCommand = require("./reengagement").default;
-        await reengagementCommand.execute(ctx, bot, true);
+        const { showReengagementEngine } = await import("../admin/reengagementEngine");
+        await showReengagementEngine(ctx);
     });
 
     // Referral management

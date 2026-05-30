@@ -1,5 +1,6 @@
 import { ExtraTelegraf } from '../index';
 import { closeDatabase, revokeExpiredPremiumUsers, expireOldPremiumOrders } from '../storage/db';
+import { startReengagementScheduler, stopReengagementScheduler, sendDailyReengagement } from "../Utils/reengagementEngine";
 
 /**
  * Cleanup and maintenance tasks
@@ -256,6 +257,10 @@ export function registerCleanupTasks(bot: ExtraTelegraf): void {
       console.error("[CLEANUP] - Error expiring old orders:", error);
     }
   }, 600000); // 10 minutes
+
+  // Re-engagement scheduler
+  void sendDailyReengagement(bot).catch((error) => console.error("[REENGAGEMENT] startup send failed:", error));
+  startReengagementScheduler(bot);
 }
 
 /**
@@ -302,5 +307,9 @@ export function setupGracefulShutdown(bot: ExtraTelegraf): void {
       // Ignore close errors
     }
     process.exit(0);
+  });
+
+  process.once("beforeExit", () => {
+    stopReengagementScheduler();
   });
 }

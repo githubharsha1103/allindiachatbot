@@ -5,6 +5,7 @@ import { getUser, updateUser, updateLastActive, processReferral } from "../stora
 import { getSetupStepPrompt, SetupStep } from "../Utils/setupFlow";
 import { getIsBroadcasting, getIsSystemBusy, checkUserRateLimit } from "../index";
 import { handleGroupVerificationStart } from "../Utils/groupVerification";
+import { handleReengagementStart } from "../Utils/reengagementEngine";
 
 const SETUP_STEP_DONE = "done";
 
@@ -56,6 +57,11 @@ export default {
 
     if (startParam === "groupverify") {
       await handleGroupVerificationStart(ctx, bot as ExtraTelegraf);
+      return;
+    }
+
+    if (startParam === "reengage_chat") {
+      await handleReengagementStart(ctx, bot as ExtraTelegraf);
       return;
     }
 

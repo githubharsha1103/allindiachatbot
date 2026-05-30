@@ -165,6 +165,10 @@ export interface User {
   // Queue status for race condition protection
   queueStatus?: "waiting" | "connecting" | "connected" | "removed"; // User's queue state
   queueJoinedAt?: number | null;
+  reengagementHistory?: { messageId: string; sentAt: number }[];
+  lastReengagementSentAt?: number | null;
+  lastReengagementMessageId?: string | null;
+  lastReengagementClickedAt?: number | null;
 }
 
 export interface MatchAnalyticsRecord {
@@ -296,9 +300,34 @@ export interface GroupVerificationPending {
   userId: number;
   groupId: string;
   joinedAt: number;
+  verificationMessageId?: number;
   verified: boolean;
   timeoutAt?: number;
   autoKickAt?: number;
+  updatedAt: number;
+}
+
+export interface ReengagementEngineSettings {
+  _id?: ObjectId | string;
+  enabled: boolean;
+  sendTime: string;
+  inactivityThresholdHours: number;
+  randomMessageRotation: boolean;
+  connectToChatButton: boolean;
+  updatedAt: number;
+  updatedBy?: number;
+}
+
+export interface ReengagementAnalytics {
+  _id?: ObjectId | string;
+  reminders_sent: number;
+  reminders_delivered: number;
+  reminders_clicked: number;
+  reminders_failed: number;
+  users_returned: number;
+  next_started_from_reminder: number;
+  successful_matches_from_reminder: number;
+  messageStats?: Record<string, { sent: number; clicked: number }>;
   updatedAt: number;
 }
 
@@ -466,6 +495,16 @@ async function getGroupVerificationPendingCollection(): Promise<Collection<Group
   return database.collection<GroupVerificationPending>("groupVerificationPending");
 }
 
+async function getReengagementSettingsCollection(): Promise<Collection<ReengagementEngineSettings>> {
+  const database = await connectToDatabase();
+  return database.collection<ReengagementEngineSettings>("reengagementSettings");
+}
+
+async function getReengagementAnalyticsCollection(): Promise<Collection<ReengagementAnalytics>> {
+  const database = await connectToDatabase();
+  return database.collection<ReengagementAnalytics>("reengagementAnalytics");
+}
+
 // Fallback to JSON for local development without MongoDB
 const JSON_FILE = "src/storage/users.json";
 const BANS_FILE = "src/storage/bans.json";
@@ -473,6 +512,8 @@ const PAYMENT_ORDERS_FILE = "src/storage/paymentOrders.json";
 const ANALYTICS_FILE = "src/storage/analytics.json";
 const GROUP_SETTINGS_FILE = "src/storage/groupSettings.json";
 const GROUP_VERIFICATION_PENDING_FILE = "src/storage/groupVerificationPending.json";
+const REENGAGEMENT_SETTINGS_FILE = "src/storage/reengagementSettings.json";
+const REENGAGEMENT_ANALYTICS_FILE = "src/storage/reengagementAnalytics.json";
 const ANALYTICS_DOC_ID = "usage_analytics_v1";
 const MAX_MATCH_ANALYTICS = 5000;
 const MAX_CHAT_ANALYTICS = 5000;
@@ -679,31 +720,194 @@ export async function updateGroupSettings(
   }, "updateGroupSettings");
 }
 
+function createDefaultReengagementSettings(): ReengagementEngineSettings {
+  return {
+    enabled: (process.env.REENGAGEMENT_ENABLED || "true").toLowerCase() === "true",
+    sendTime: process.env.REENGAGEMENT_SEND_TIME || "10:00",
+    inactivityThresholdHours: Number.parseInt(process.env.REENGAGEMENT_INACTIVITY_HOURS || "24", 10) || 24,
+    randomMessageRotation: true,
+    connectToChatButton: true,
+    updatedAt: Date.now()
+  };
+}
+
+function normalizeReengagementSettings(settings?: Partial<ReengagementEngineSettings> | null): ReengagementEngineSettings {
+  const defaults = createDefaultReengagementSettings();
+  return {
+    enabled: settings?.enabled ?? defaults.enabled,
+    sendTime: settings?.sendTime || defaults.sendTime,
+    inactivityThresholdHours: settings?.inactivityThresholdHours && settings.inactivityThresholdHours > 0
+      ? settings.inactivityThresholdHours
+      : defaults.inactivityThresholdHours,
+    randomMessageRotation: settings?.randomMessageRotation ?? defaults.randomMessageRotation,
+    connectToChatButton: settings?.connectToChatButton ?? defaults.connectToChatButton,
+    updatedAt: settings?.updatedAt || Date.now(),
+    updatedBy: settings?.updatedBy
+  };
+}
+
+export async function getReengagementEngineSettings(): Promise<ReengagementEngineSettings> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getReengagementSettingsCollection();
+      const existing = await collection.findOne({});
+      if (existing) {
+        const normalized = normalizeReengagementSettings(existing);
+        return { ...normalized, _id: existing._id };
+      }
+      const defaults = createDefaultReengagementSettings();
+      await collection.insertOne(defaults);
+      return defaults;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getReengagementEngineSettings error:", error);
+    }
+  }
+
+  const stored = await readJson<ReengagementEngineSettings>(REENGAGEMENT_SETTINGS_FILE);
+  const hasStored = stored && typeof stored === "object" && Object.keys(stored).length > 0;
+  if (hasStored) {
+    const normalized = normalizeReengagementSettings(stored);
+    await writeJson(REENGAGEMENT_SETTINGS_FILE, normalized);
+    return normalized;
+  }
+  const defaults = createDefaultReengagementSettings();
+  await writeJson(REENGAGEMENT_SETTINGS_FILE, defaults);
+  return defaults;
+}
+
+export async function updateReengagementEngineSettings(
+  updates: Partial<ReengagementEngineSettings>,
+  updatedBy?: number
+): Promise<ReengagementEngineSettings> {
+  const current = await getReengagementEngineSettings();
+  const next = normalizeReengagementSettings({
+    ...current,
+    ...updates,
+    updatedAt: Date.now(),
+    updatedBy: updatedBy ?? current.updatedBy
+  });
+
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getReengagementSettingsCollection();
+      await collection.updateOne(current._id ? { _id: current._id } : {}, { $set: next }, { upsert: true });
+      return next;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB updateReengagementEngineSettings error:", error);
+    }
+  }
+
+  await writeJson(REENGAGEMENT_SETTINGS_FILE, next);
+  return next;
+}
+
+function createDefaultReengagementAnalytics(): ReengagementAnalytics {
+  return {
+    reminders_sent: 0,
+    reminders_delivered: 0,
+    reminders_clicked: 0,
+    reminders_failed: 0,
+    users_returned: 0,
+    next_started_from_reminder: 0,
+    successful_matches_from_reminder: 0,
+    messageStats: {},
+    updatedAt: Date.now()
+  };
+}
+
+export async function getReengagementAnalytics(): Promise<ReengagementAnalytics> {
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getReengagementAnalyticsCollection();
+      const existing = await collection.findOne({});
+      if (existing) {
+        return existing;
+      }
+      const defaults = createDefaultReengagementAnalytics();
+      await collection.insertOne(defaults);
+      return defaults;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB getReengagementAnalytics error:", error);
+    }
+  }
+
+  const stored = await readJson<ReengagementAnalytics>(REENGAGEMENT_ANALYTICS_FILE);
+  if (stored && Object.keys(stored).length > 0) {
+    return { ...createDefaultReengagementAnalytics(), ...stored };
+  }
+  const defaults = createDefaultReengagementAnalytics();
+  await writeJson(REENGAGEMENT_ANALYTICS_FILE, defaults);
+  return defaults;
+}
+
+export async function incrementReengagementAnalytics(
+  updates: Partial<Omit<ReengagementAnalytics, "_id" | "updatedAt">> & { messageText?: string }
+): Promise<void> {
+  const current = await getReengagementAnalytics();
+  const nextMessageStats = { ...(current.messageStats || {}) };
+  if (updates.messageText) {
+    const currentStats = nextMessageStats[updates.messageText] || { sent: 0, clicked: 0 };
+    if (updates.reminders_sent) currentStats.sent += updates.reminders_sent;
+    if (updates.reminders_clicked) currentStats.clicked += updates.reminders_clicked;
+    nextMessageStats[updates.messageText] = currentStats;
+  }
+  const next = {
+    ...current,
+    reminders_sent: current.reminders_sent + (updates.reminders_sent || 0),
+    reminders_delivered: current.reminders_delivered + (updates.reminders_delivered || 0),
+    reminders_clicked: current.reminders_clicked + (updates.reminders_clicked || 0),
+    reminders_failed: current.reminders_failed + (updates.reminders_failed || 0),
+    users_returned: current.users_returned + (updates.users_returned || 0),
+    next_started_from_reminder: current.next_started_from_reminder + (updates.next_started_from_reminder || 0),
+    successful_matches_from_reminder: current.successful_matches_from_reminder + (updates.successful_matches_from_reminder || 0),
+    messageStats: nextMessageStats,
+    updatedAt: Date.now()
+  };
+
+  if (useMongoDB && !isFallbackMode) {
+    try {
+      const collection = await getReengagementAnalyticsCollection();
+      await collection.updateOne(current._id ? { _id: current._id } : {}, { $set: next }, { upsert: true });
+      return;
+    } catch (error) {
+      console.error("[ERROR] - MongoDB incrementReengagementAnalytics error:", error);
+    }
+  }
+
+  await writeJson(REENGAGEMENT_ANALYTICS_FILE, next);
+}
+
 async function getPendingVerificationCollection(): Promise<Collection<GroupVerificationPending>> {
   return getGroupVerificationPendingCollection();
 }
 
+export interface PendingGroupVerificationInput {
+  userId: number;
+  groupId: string;
+  joinedAt: number;
+  verificationMessageId?: number;
+  timeoutAt?: number;
+  autoKickAt?: number;
+}
+
 export async function upsertPendingGroupVerification(
-  userId: number,
-  groupId: string,
-  joinedAt: number,
-  timeoutAt?: number,
-  autoKickAt?: number
+  input: PendingGroupVerificationInput
 ): Promise<void> {
   const record: GroupVerificationPending = {
-    userId,
-    groupId,
-    joinedAt,
+    userId: input.userId,
+    groupId: input.groupId,
+    joinedAt: input.joinedAt,
+    verificationMessageId: input.verificationMessageId,
     verified: false,
-    timeoutAt,
-    autoKickAt,
+    timeoutAt: input.timeoutAt,
+    autoKickAt: input.autoKickAt,
     updatedAt: Date.now()
   };
 
   if (useMongoDB && !isFallbackMode) {
     try {
       const collection = await getPendingVerificationCollection();
-      await collection.updateOne({ userId, groupId }, { $set: record }, { upsert: true });
+      await collection.updateOne({ userId: input.userId, groupId: input.groupId }, { $set: record }, { upsert: true });
       return;
     } catch (error) {
       console.error("[ERROR] - MongoDB upsertPendingGroupVerification error:", error);
@@ -711,7 +915,7 @@ export async function upsertPendingGroupVerification(
   }
 
   const pending = await readJson<Record<string, GroupVerificationPending>>(GROUP_VERIFICATION_PENDING_FILE);
-  pending[`${userId}:${groupId}`] = record;
+  pending[`${input.userId}:${input.groupId}`] = record;
   await writeJson(GROUP_VERIFICATION_PENDING_FILE, pending);
 }
 

@@ -345,7 +345,7 @@ export function registerGroupManagementCallbacks(bot: ExtraTelegraf): void {
   bot.action("ADMIN_GROUP_VERIFICATION_BOT_PREVIEW", async (ctx: Context) => {
     if (!(await assertAuthenticatedAdmin(ctx))) return;
     const settings = await getGroupSettings();
-    const buttonText = "▶ Start Verification";
+    const buttonText = "🚀 Start";
     const buttonUrl = buildVerificationBotUrl(settings.verificationBotUsername);
     await safeAnswerCbQuery(ctx);
     await safeEditMessageText(

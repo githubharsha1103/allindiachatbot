@@ -16,6 +16,7 @@ import { ExtraTelegraf } from "../index";
 import { isAdminContext, unauthorizedResponse } from "../Utils/adminAuth";
 import { safeAnswerCbQuery, getErrorMessage } from "../Utils/telegramUi";
 import { registerGroupManagementCallbacks } from "./groupManagement";
+import { registerReengagementEngineCallbacks } from "./reengagementEngine";
 
 function parseQueueActionUserId(ctx: Context, prefix: string): number | null {
     const callbackQuery = ctx.callbackQuery as { data?: string } | undefined;
@@ -293,6 +294,7 @@ export function registerAdminCallbacks(bot: ExtraTelegraf): void {
     });
 
     registerGroupManagementCallbacks(bot);
+    registerReengagementEngineCallbacks(bot);
     
     console.log("[admin] Admin callbacks registered successfully");
 }
