@@ -195,6 +195,15 @@ export function hourlyMapCleanup(bot: ExtraTelegraf): void {
  * Register all cleanup intervals
  */
 export function registerCleanupTasks(bot: ExtraTelegraf): void {
+  const reengagementGloballyEnabled = (process.env.REENGAGEMENT_ENABLED ?? "true").toLowerCase() === "true";
+  if (!reengagementGloballyEnabled) {
+    console.log("[REENGAGEMENT] Disabled by REENGAGEMENT_ENABLED=false; skipping startup re-engagement checks.");
+  } else {
+    // Re-engagement scheduler
+    void sendDailyReengagement(bot).catch((error) => console.error("[REENGAGEMENT] startup send failed:", error));
+    startReengagementScheduler(bot);
+  }
+
   // Run premium expiry cleanup once on startup
   revokeExpiredPremiumUsers().then(revoked => {
     if (revoked > 0) {
@@ -258,9 +267,6 @@ export function registerCleanupTasks(bot: ExtraTelegraf): void {
     }
   }, 600000); // 10 minutes
 
-  // Re-engagement scheduler
-  void sendDailyReengagement(bot).catch((error) => console.error("[REENGAGEMENT] startup send failed:", error));
-  startReengagementScheduler(bot);
 }
 
 /**

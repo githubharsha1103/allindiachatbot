@@ -129,7 +129,13 @@ async function bumpAnalytics(delta: Partial<{
   await incrementReengagementAnalytics(delta);
 }
 
+export function isReengagementGloballyEnabled(): boolean {
+  return (process.env.REENGAGEMENT_ENABLED ?? "true").toLowerCase() === "true";
+}
+
 export async function sendDailyReengagement(bot: ExtraTelegraf): Promise<void> {
+  if (!isReengagementGloballyEnabled()) return;
+
   const settings = await getReengagementEngineSettings();
   if (!settings.enabled) return;
 
@@ -176,6 +182,7 @@ export async function handleReengagementStart(ctx: Context, bot: ExtraTelegraf):
 }
 
 export function startReengagementScheduler(bot: ExtraTelegraf): void {
+  if (!isReengagementGloballyEnabled()) return;
   if (runtime.timer) return;
   const schedule = async () => {
     const settings = await getReengagementEngineSettings();

@@ -27,6 +27,11 @@ declare namespace NodeJS {
       // Web API Key (for securing admin endpoints)
       WEB_API_KEY?: string;
 
+      // Re-engagement reminders
+      REENGAGEMENT_ENABLED?: string;
+      REENGAGEMENT_SEND_TIME?: string;
+      REENGAGEMENT_INACTIVITY_HOURS?: string;
+
       // Telegram Stars Premium plan prices (amount in Stars / XTR)
       STARS_PREMIUM_WEEKLY?: string;
       STARS_PREMIUM_MONTHLY?: string;
